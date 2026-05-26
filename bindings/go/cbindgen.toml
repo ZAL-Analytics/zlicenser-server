@@ -1,0 +1,5 @@
+language = "C"
+header = "zlicenser_server.h"
+
+[export]
+prefix = "zlicenser_server_"

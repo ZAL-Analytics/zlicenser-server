@@ -1,0 +1,14 @@
+[package]
+name = "zlicenser-server-python"
+version = "0.1.0"
+edition = "2021"
+authors = ["ZAL Analytics <arsalan@anwari.nl>"]
+publish = false
+
+[lib]
+name = "zlicenser_server_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+zlicenser-server = { path = "../../crates/zlicenser-server" }
+pyo3 = { version = "0.25", features = ["extension-module"] }

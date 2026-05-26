@@ -1,2 +1,5 @@
-/target
-Cargo.lock
+/target/
+node_modules/
+dist/
+build/
+.svelte-kit/

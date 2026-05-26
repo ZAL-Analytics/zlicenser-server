@@ -1,18 +1,23 @@
-[package]
-name = "zlicenser-server"
-version = "0.1.0"
-edition = "2021"
-description = "Server-side packages, tooling and setup for vendors using zlicenser. Manages licenses, tracks usage, validates requests, and handles payments with timekeeping."
-license = "Apache-2.0"
-repository = "https://github.com/arsalan-anwari/zlicenser-server"
-homepage = "https://github.com/arsalan-anwari/zlicenser-server"
-documentation = "https://docs.rs/zlicenser-server"
-readme = "README.md"
-keywords = ["licensing", "drm", "binary-protection", "fingerprinting", "vendor"]
-categories = ["cryptography", "authentication"]
-exclude = ["deploy.sh", ".github/"]
+[workspace]
+members = [
+    "crates/zlicenser-server",
+    "apps/zlicenser-server-bin",
+    "bindings/python",
+    "bindings/nodejs",
+    "bindings/go",
+    "xtask",
+]
+resolver = "2"
 
-[lib]
-name = "zlicenser_server"
+[workspace.dependencies]
+zlicenser-protocol = "0.1"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-[dependencies]
+[patch.crates-io]
+zlicenser-protocol = { path = "../zlicenser-protocol" }
