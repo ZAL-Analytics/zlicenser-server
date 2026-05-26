@@ -1,0 +1,18 @@
+[package]
+name = "zlicenser-server"
+version = "0.1.0"
+edition = "2021"
+description = "Server-side packages, tooling and setup for vendors using zlicenser. Manages licenses, tracks usage, validates requests, and handles payments with timekeeping."
+license = "Apache-2.0"
+repository = "https://github.com/arsalan-anwari/zlicenser-server"
+homepage = "https://github.com/arsalan-anwari/zlicenser-server"
+documentation = "https://docs.rs/zlicenser-server"
+readme = "README.md"
+keywords = ["licensing", "drm", "binary-protection", "fingerprinting", "vendor"]
+categories = ["cryptography", "authentication"]
+exclude = ["deploy.sh", ".github/"]
+
+[lib]
+name = "zlicenser_server"
+
+[dependencies]
