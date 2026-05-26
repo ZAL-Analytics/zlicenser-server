@@ -18,7 +18,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: zal-analytics/zlicenser-protocol
-          path: ../zlicenser-protocol
+          path: zlicenser-protocol
+      - run: sed -i 's|path = "../zlicenser-protocol"|path = "zlicenser-protocol"|' Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p zlicenser-server
@@ -33,7 +34,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: zal-analytics/zlicenser-protocol
-          path: ../zlicenser-protocol
+          path: zlicenser-protocol
+      - run: sed -i 's|path = "../zlicenser-protocol"|path = "zlicenser-protocol"|' Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -59,7 +61,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: zal-analytics/zlicenser-protocol
-          path: ../zlicenser-protocol
+          path: zlicenser-protocol
+      - run: sed -i 's|path = "../zlicenser-protocol"|path = "zlicenser-protocol"|' Cargo.toml
       - uses: EmbarkStudios/cargo-deny-action@v2
 
   audit:
@@ -70,7 +73,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: zal-analytics/zlicenser-protocol
-          path: ../zlicenser-protocol
+          path: zlicenser-protocol
+      - run: sed -i 's|path = "../zlicenser-protocol"|path = "zlicenser-protocol"|' Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-audit --locked
