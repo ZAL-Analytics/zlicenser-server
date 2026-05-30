@@ -1,36 +1,42 @@
 # zlicenser-server
 
-Server library and vendor backend for the zlicenser licensing framework.
+Server library and vendor backend for the [zlicenser](https://github.com/zal-analytics/zlicenser) licensing framework.
 
-## Overview
+This is the vendor side of the ecosystem. Vendors self-host the server binary to issue and manage licenses for their software. The library crate can also be embedded directly in an existing application if you'd rather not run a separate server process.
 
-`zlicenser-server` is the vendor side of the zlicenser ecosystem. It includes the library crate for vendors to embed in their own applications, and a ready-to-run axum HTTP server with an embedded SvelteKit dashboard.
+The server handles the four-message license exchange protocol, seat enforcement, hardware binding, revocation, grace period tracking, and hardware transfer requests. It comes with a web dashboard for managing products, licenses, and customers without touching the API directly.
 
-## Workspace layout
+## What's in this repo
 
 ```
-crates/zlicenser-server/     # library crate (crates.io)
-apps/zlicenser-server-bin/   # axum server binary with embedded dashboard (publish = false)
-bindings/python/             # PyO3 + maturin Python bindings (publish = false)
-bindings/nodejs/             # napi-rs Node.js bindings (publish = false)
-bindings/go/                 # CGo + cbindgen Go bindings (publish = false)
-migrations/                  # SQL migration files
-xtask/                       # build automation (publish = false)
+crates/zlicenser-server/     # library crate (published to crates.io)
+apps/zlicenser-server-bin/   # axum server binary with embedded SvelteKit dashboard
+bindings/python/             # PyO3 + maturin
+bindings/nodejs/             # napi-rs
+bindings/go/                 # CGo + cbindgen
+migrations/                  # SQL migrations
+xtask/                       # build automation
 docs/                        # mdBook documentation
 ```
 
-## System dependencies
+The library crate is the only thing published to crates.io. Everything else is `publish = false`.
 
-| Component | Ubuntu | Fedora |
+## Features
+
+| Feature | Description | Default |
 |---|---|---|
-| zlicenser-server (default: sqlite + http) | `libsqlite3-dev` | `sqlite-devel` |
-| zlicenser-server (postgres feature) | | |
-| zlicenser-server-bin | `libsqlite3-dev` | `sqlite-devel` |
-| Python bindings | `python3-dev python3-pip` + `pip install maturin` | `python3-devel python3-pip` + `pip install maturin` |
-| Node.js bindings | nodejs (>=18) | nodejs (>=18) |
-| SvelteKit dashboard | nodejs (>=18) | nodejs (>=18) |
+| `http-server` | axum HTTP routes and middleware | yes |
+| `storage-sqlite` | SQLite storage backend | yes |
+| `storage-postgres` | PostgreSQL storage backend | no |
+| `payment-stripe` | Stripe payment integration | no |
 
-Ubuntu:
+SQLite is fine for most self-hosted setups. Switch to `storage-postgres` if you need PostgreSQL for scale or to fit into existing infrastructure. The `storage-postgres` feature uses sqlx's pure-Rust Postgres driver, so there's no `libpq` system dependency.
+
+## Building
+
+Rust toolchain: install via `rustup`. The `rust-toolchain.toml` pins to a specific stable version.
+
+### Ubuntu
 
 ```sh
 sudo apt install -y libsqlite3-dev python3-dev python3-pip
@@ -39,7 +45,7 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt install -y nodejs
 ```
 
-Fedora:
+### Fedora
 
 ```sh
 sudo dnf install -y sqlite-devel python3-devel python3-pip
@@ -47,21 +53,16 @@ pip3 install maturin
 sudo dnf install -y nodejs
 ```
 
-Rust toolchain: install via `rustup`, `rust-toolchain.toml` pins to stable. The `storage-postgres` feature uses sqlx's pure-Rust driver, no `libpq` needed.
+SQLite is only needed for the default `storage-sqlite` feature. Node.js is only needed to build the dashboard frontend and the Node.js bindings. Python deps are only needed for the Python bindings.
+
+## Platform
+
+Linux x86_64 only. The client-side components (shim, hardware fingerprinting) depend on Linux kernel interfaces, so the server is only tested and supported on Linux as well. Windows and macOS are not in scope for this project. zlicenser-pro, a future commercial release, may support other operating systems.
 
 ## Related repositories
 
 - [zlicenser-protocol](https://github.com/zal-analytics/zlicenser-protocol): shared protocol, crypto, and wire formats
 - [zlicenser](https://github.com/zal-analytics/zlicenser): client library and user-facing apps
-
-## Features
-
-| Feature | Description | Default |
-|---|---|---|
-| `http-server` | axum HTTP server routes and middleware | yes |
-| `storage-sqlite` | SQLite storage backend via sqlx | yes |
-| `storage-postgres` | PostgreSQL storage backend via sqlx | no |
-| `payment-stripe` | Stripe payment provider | no |
 
 ## License
 
