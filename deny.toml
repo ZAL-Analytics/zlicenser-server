@@ -20,7 +20,15 @@ allow = [
 multiple-versions = "warn"
 
 [advisories]
-ignore = []
+ignore = [
+    # Marvin Attack timing side-channel. Affects RSA private-key operations only.
+    # We use rsa solely for TSA signature verification (public key op). No fix available.
+    { id = "RUSTSEC-2023-0071", reason = "rsa used for signature verification only; Marvin Attack requires private-key ops" },
+    # tokio-tar PAX header bug. Dev-only transitive dep via testcontainers. No production exposure.
+    { id = "RUSTSEC-2025-0111", reason = "dev-only dep via testcontainers; no production tar parsing" },
+    # rustls-pemfile unmaintained. Dev-only transitive dep via bollard/testcontainers.
+    { id = "RUSTSEC-2025-0134", reason = "dev-only dep via testcontainers; no production exposure" },
+]
 
 [sources]
 unknown-registry = "deny"

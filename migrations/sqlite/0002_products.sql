@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS products (
+    id                           BLOB PRIMARY KEY,
+    name                         TEXT NOT NULL,
+    description                  TEXT NOT NULL,
+    connectivity_mode            TEXT NOT NULL,
+    seat_count                   INTEGER NOT NULL,
+    expiry_policy                TEXT NOT NULL,
+    grace_period_days            INTEGER,
+    heartbeat_interval_secs      INTEGER,
+    heartbeat_grace_secs         INTEGER,
+    shutdown_countdown_secs      INTEGER,
+    tsa_tier                     TEXT NOT NULL,
+    bundle_version               TEXT NOT NULL,
+    transfer_policy              TEXT NOT NULL,
+    pricing_amount               INTEGER NOT NULL,
+    pricing_currency             TEXT NOT NULL,
+    payment_provider             TEXT NOT NULL,
+    min_client_version_warning   TEXT,
+    min_client_version_required  TEXT,
+    active                       INTEGER NOT NULL CHECK (active IN (0, 1)),
+    created_at                   INTEGER NOT NULL,
+    updated_at                   INTEGER NOT NULL
+);

@@ -1,0 +1,23 @@
+CREATE TABLE IF NOT EXISTS products (
+    id                           UUID PRIMARY KEY,
+    name                         TEXT NOT NULL,
+    description                  TEXT NOT NULL,
+    connectivity_mode            TEXT NOT NULL,
+    seat_count                   BIGINT NOT NULL,
+    expiry_policy                TEXT NOT NULL,
+    grace_period_days            BIGINT,
+    heartbeat_interval_secs      BIGINT,
+    heartbeat_grace_secs         BIGINT,
+    shutdown_countdown_secs      BIGINT,
+    tsa_tier                     TEXT NOT NULL,
+    bundle_version               TEXT NOT NULL,
+    transfer_policy              TEXT NOT NULL,
+    pricing_amount               BIGINT NOT NULL,
+    pricing_currency             TEXT NOT NULL,
+    payment_provider             TEXT NOT NULL,
+    min_client_version_warning   TEXT,
+    min_client_version_required  TEXT,
+    active                       BOOLEAN NOT NULL,
+    created_at                   BIGINT NOT NULL,
+    updated_at                   BIGINT NOT NULL
+);

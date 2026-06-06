@@ -47,6 +47,14 @@ if [[ ! -d "$PROTOCOL" ]]; then
   exit 1
 fi
 
+# --all-features enables storage-postgres which starts a testcontainer (requires Podman/Docker)
+PODMAN_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
+DOCKER_SOCK="/var/run/docker.sock"
+if [[ -z "${DOCKER_HOST:-}" ]] && [[ ! -S "$PODMAN_SOCK" ]] && [[ ! -S "$DOCKER_SOCK" ]]; then
+  echo -e "${YLW}WARNING: no container socket found — test --all-features will fail (postgres testcontainer needs Podman/Docker)${RST}"
+  echo -e "  Start Podman: ${BLD}systemctl --user start podman.socket${RST}"
+fi
+
 [[ $FIX -eq 1 ]] && (cd "$REPO" && cargo fmt) && echo -e "  ${GRN}fmt (auto-fixed)${RST}" || true
 
 step "fmt"                               "cd '$REPO' && cargo fmt --check"                                                       || FAILED+=(fmt)

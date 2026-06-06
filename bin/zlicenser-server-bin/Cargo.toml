@@ -10,7 +10,7 @@ name = "zlicenser-server"
 path = "src/main.rs"
 
 [dependencies]
-zlicenser-server = { path = "../../crates/zlicenser-server" }
+zlicenser-server = { path = "../../" }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

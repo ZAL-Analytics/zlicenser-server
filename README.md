@@ -9,17 +9,18 @@ The server handles the four-message license exchange protocol, seat enforcement,
 ## What's in this repo
 
 ```
-crates/zlicenser-server/     # library crate (published to crates.io)
-apps/zlicenser-server-bin/   # axum server binary with embedded SvelteKit dashboard
+src/                         # library crate source (published to crates.io)
+bin/zlicenser-server-bin/    # axum server binary with embedded SvelteKit dashboard
 bindings/python/             # PyO3 + maturin
 bindings/nodejs/             # napi-rs
 bindings/go/                 # CGo + cbindgen
-migrations/                  # SQL migrations
+migrations/sqlite/           # SQLite migrations
+migrations/postgres/         # PostgreSQL migrations
 xtask/                       # build automation
 docs/                        # mdBook documentation
 ```
 
-The library crate is the only thing published to crates.io. Everything else is `publish = false`.
+The workspace root `Cargo.toml` is both the workspace manifest and the published library crate. Everything under `bin/` and `bindings/` is `publish = false`.
 
 ## Features
 

@@ -70,12 +70,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - uses: rustsec/audit-check@v2
         with:
-          repository: zal-analytics/zlicenser-protocol
-          path: zlicenser-protocol
-      - run: sed -i 's|path = "../zlicenser-protocol"|path = "zlicenser-protocol"|' Cargo.toml
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo install cargo-audit --locked
-      - run: cargo audit
+          token: ${{ secrets.GITHUB_TOKEN }}
