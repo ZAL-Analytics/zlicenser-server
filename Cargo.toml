@@ -9,7 +9,7 @@ members = [
 resolver = "2"
 
 [workspace.dependencies]
-zlicenser-protocol = "0.3"
+zlicenser-protocol = "0.3.1"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -27,7 +27,7 @@ zlicenser-protocol = { path = "../zlicenser-protocol" }
 name = "zlicenser-server"
 version = "0.1.0"
 edition = "2021"
-authors = ["ZAL Analytics <arsalan@anwari.nl>"]
+authors = ["ZAL Analytics <info@zal-analytics.ch>"]
 description = "Server library for the zlicenser hardware-bound software licensing framework."
 documentation = "https://docs.rs/zlicenser-server"
 repository = "https://github.com/zal-analytics/zlicenser-server"
