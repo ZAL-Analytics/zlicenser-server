@@ -25,7 +25,7 @@ zlicenser-protocol = { path = "../zlicenser-protocol" }
 
 [package]
 name = "zlicenser-server"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 authors = ["ZAL Analytics <info@zal-analytics.ch>"]
 description = "Server library for the zlicenser hardware-bound software licensing framework."
