@@ -1,8 +1,9 @@
 use async_trait::async_trait;
-use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
+use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
+#[allow(clippy::wildcard_imports)] // storage impls use all domain types from this module
 use crate::storage::types::*;
 use crate::storage::{
     CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore, SecurityStore,
@@ -33,8 +34,8 @@ fn encode_enum<T: std::fmt::Display>(t: &T) -> String {
     t.to_string()
 }
 
-fn decode_enum<T: std::str::FromStr<Err = crate::Error>>(s: String) -> crate::Result<T> {
-    s.parse()
+fn decode_enum<T: std::str::FromStr<Err = crate::Error>>(s: impl AsRef<str>) -> crate::Result<T> {
+    s.as_ref().parse()
 }
 
 #[derive(sqlx::FromRow)]
@@ -273,6 +274,7 @@ struct DbEmailLogEntry {
     error_message: Option<String>,
 }
 
+#[allow(clippy::unnecessary_wraps)] // consistent with other from_db_* functions that do need Result
 fn from_db_vendor_config(r: DbVendorConfig) -> crate::Result<VendorConfig> {
     Ok(VendorConfig {
         id: r.id,
@@ -310,6 +312,7 @@ fn from_db_product(r: DbProduct) -> crate::Result<Product> {
     })
 }
 
+#[allow(clippy::unnecessary_wraps)] // consistent with other from_db_* functions that do need Result
 fn from_db_term_declaration(r: DbProductTermDeclaration) -> crate::Result<ProductTermDeclaration> {
     Ok(ProductTermDeclaration {
         product_id: r.product_id,
@@ -361,6 +364,7 @@ fn from_db_upgrade_policy(r: DbUpgradePolicy) -> crate::Result<UpgradePolicyRow>
     })
 }
 
+#[allow(clippy::unnecessary_wraps)] // consistent with other from_db_* functions that do need Result
 fn from_db_customer(r: DbCustomer) -> crate::Result<Customer> {
     Ok(Customer {
         id: r.id,
@@ -409,6 +413,7 @@ fn from_db_license(r: DbLicense) -> crate::Result<License> {
     })
 }
 
+#[allow(clippy::unnecessary_wraps)] // consistent with other from_db_* functions that do need Result
 fn from_db_seat_binding(r: DbFingerprintSeatBinding) -> crate::Result<FingerprintSeatBinding> {
     Ok(FingerprintSeatBinding {
         id: r.id,
@@ -422,6 +427,7 @@ fn from_db_seat_binding(r: DbFingerprintSeatBinding) -> crate::Result<Fingerprin
     })
 }
 
+#[allow(clippy::unnecessary_wraps)] // consistent with other from_db_* functions that do need Result
 fn from_db_issuance_secret(r: DbIssuanceSecret) -> crate::Result<IssuanceSecret> {
     Ok(IssuanceSecret {
         license_id: r.license_id,
@@ -1261,7 +1267,8 @@ impl SeatStore for PostgresStorage {
         .bind(license_id)
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.0 as u32)
+        Ok(u32::try_from(row.0)
+            .map_err(|_| crate::Error::Corrupt("seat binding count out of u32 range".into()))?)
     }
 
     async fn revoke_seat_binding(&self, id: Uuid, revoked_at: i64) -> crate::Result<()> {
@@ -1714,7 +1721,9 @@ impl EnrollmentStore for PostgresStorage {
         .bind(product_id)
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.0 as u32)
+        Ok(u32::try_from(row.0).map_err(|_| {
+            crate::Error::Corrupt("transferable binding count out of u32 range".into())
+        })?)
     }
 
     async fn set_seat_binding_transfer_pending(

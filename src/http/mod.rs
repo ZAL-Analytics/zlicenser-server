@@ -7,10 +7,10 @@ pub mod webhook;
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{delete, post},
-    Json, Router,
 };
 use serde_json::json;
 

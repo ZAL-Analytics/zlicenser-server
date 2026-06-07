@@ -1,11 +1,11 @@
 use super::handlers::{
-    deserialize_grant, deserialize_receipt, empty_receipt, issue_all_records, now_ns,
-    upsert_customer, HandlerContext,
+    HandlerContext, deserialize_grant, deserialize_receipt, empty_receipt, issue_all_records,
+    now_ns, upsert_customer,
 };
 use super::secrets::SIssue;
 use crate::storage::{
-    types::{EnrollmentSession, EnrollmentSessionUpdate, EnrollmentState},
     Storage,
+    types::{EnrollmentSession, EnrollmentSessionUpdate, EnrollmentState},
 };
 
 pub async fn startup_recovery_sweep<S: Storage>(ctx: &HandlerContext<S>) -> crate::Result<()> {
@@ -35,7 +35,7 @@ async fn recover_issue<S: Storage>(
 
     if ctx.storage.get_license(license_id).await?.is_some() {
         let now = now_ns();
-        let _ = ctx
+        if let Err(e) = ctx
             .storage
             .update_enrollment_session(
                 session.id,
@@ -48,7 +48,10 @@ async fn recover_issue<S: Storage>(
                     ..Default::default()
                 },
             )
-            .await;
+            .await
+        {
+            tracing::warn!(session_id = %session.id, error = %e, "failed to mark already-issued session as Issued during recovery");
+        }
         return Ok(());
     }
 
@@ -95,7 +98,7 @@ async fn recover_issue<S: Storage>(
         &grant.tsa_token,
         &confirmation,
         license_id,
-        grant.binding_cert.seat_index as i64,
+        i64::from(grant.binding_cert.seat_index),
         grant.binding_cert.expiry_at_ns,
         session.id,
         test_mode,
@@ -107,7 +110,9 @@ async fn recover_issue<S: Storage>(
     if let Some(transport) = &ctx.email {
         let t = transport.clone();
         tokio::spawn(async move {
-            let _ = t.send_grant_confirmation(license_id).await;
+            if let Err(e) = t.send_grant_confirmation(license_id).await {
+                tracing::warn!(license_id = %license_id, error = %e, "failed to send grant confirmation email during recovery");
+            }
         });
     }
 

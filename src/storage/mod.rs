@@ -80,7 +80,7 @@ pub trait VendorStore: Send + Sync {
         to_version: &str,
     ) -> crate::Result<Option<UpgradePolicyRow>>;
     async fn list_upgrade_policies(&self, product_id: Uuid)
-        -> crate::Result<Vec<UpgradePolicyRow>>;
+    -> crate::Result<Vec<UpgradePolicyRow>>;
     async fn delete_upgrade_policy(&self, id: Uuid) -> crate::Result<()>;
 }
 

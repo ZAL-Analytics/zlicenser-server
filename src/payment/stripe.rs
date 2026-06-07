@@ -158,8 +158,11 @@ impl PaymentProvider for StripePaymentProvider {
 }
 
 fn now_ns() -> i64 {
-    std::time::SystemTime::now()
+    // Nanoseconds since epoch wraps in year 2262; safe for all practical purposes.
+    #[allow(clippy::cast_possible_truncation)]
+    let ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos() as i64
+        .as_nanos() as i64;
+    ns
 }

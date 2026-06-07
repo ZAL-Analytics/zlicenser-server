@@ -15,17 +15,15 @@ pub async fn stripe_handler<S: Storage + Clone + Send + Sync + 'static>(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let secret = match ctx.config.stripe_webhook_secret.as_deref() {
-        Some(s) => s,
-        None => return StatusCode::NOT_IMPLEMENTED.into_response(),
+    let Some(secret) = ctx.config.stripe_webhook_secret.as_deref() else {
+        return StatusCode::NOT_IMPLEMENTED.into_response();
     };
 
-    let sig_header = match headers
+    let Some(sig_header) = headers
         .get("stripe-signature")
         .and_then(|v| v.to_str().ok())
-    {
-        Some(s) => s,
-        None => return (StatusCode::BAD_REQUEST, "missing stripe-signature").into_response(),
+    else {
+        return (StatusCode::BAD_REQUEST, "missing stripe-signature").into_response();
     };
 
     if !verify_stripe_signature(sig_header, &body, secret) {
@@ -111,14 +109,12 @@ fn verify_stripe_signature(header: &str, body: &[u8], secret: &str) -> bool {
         }
     }
 
-    let (ts, sig_hex) = match (timestamp, signature_hex) {
-        (Some(t), Some(s)) => (t, s),
-        _ => return false,
+    let (Some(ts), Some(sig_hex)) = (timestamp, signature_hex) else {
+        return false;
     };
 
-    let expected_bytes = match hex_to_bytes(sig_hex) {
-        Some(b) => b,
-        None => return false,
+    let Some(expected_bytes) = hex_to_bytes(sig_hex) else {
+        return false;
     };
 
     let signed_payload = format!("{}.{}", ts, String::from_utf8_lossy(body));

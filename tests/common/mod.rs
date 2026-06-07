@@ -483,11 +483,12 @@ pub async fn test_issuance_secret(s: &dyn Storage, f: &Fixture) {
     assert_eq!(got.secret, vec![0xff; 64]);
 
     s.delete_issuance_secret(f.secret_lic_id).await.unwrap();
-    assert!(s
-        .get_issuance_secret(f.secret_lic_id)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        s.get_issuance_secret(f.secret_lic_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     let err = s.delete_issuance_secret(f.secret_lic_id).await.unwrap_err();
     assert!(matches!(err, zlicenser_server::Error::NotFound));
@@ -595,11 +596,12 @@ pub async fn test_session(s: &dyn Storage, f: &Fixture) {
     let got = s.get_session(sess_id).await.unwrap().unwrap();
     assert_eq!(got.status, SessionStatus::Suspect);
 
-    assert!(s
-        .get_active_session_for_binding(b_id)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        s.get_active_session_for_binding(b_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
     let sess2_id = uid();
     let sess2 = ActiveSession {

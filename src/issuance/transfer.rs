@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use super::handlers::now_ns;
 use crate::storage::{
-    types::{TransferPolicy, TransferRequest, TransferStatus},
     Storage,
+    types::{TransferPolicy, TransferRequest, TransferStatus},
 };
 
 pub async fn request_transfer<S: Storage>(

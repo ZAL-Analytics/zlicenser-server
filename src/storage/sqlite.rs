@@ -1,9 +1,10 @@
 use async_trait::async_trait;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::str::FromStr;
 use uuid::Uuid;
 
+#[allow(clippy::wildcard_imports)] // storage impls use all domain types from this module
 use crate::storage::types::*;
 use crate::storage::{
     CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore, SecurityStore,
@@ -64,11 +65,7 @@ fn blob_to_uuid(b: &[u8]) -> crate::Result<Uuid> {
 }
 
 fn bool_to_int(b: bool) -> i64 {
-    if b {
-        1
-    } else {
-        0
-    }
+    i64::from(b)
 }
 
 fn int_to_bool(n: i64) -> bool {
@@ -79,8 +76,8 @@ fn encode_enum<T: std::fmt::Display>(t: &T) -> String {
     t.to_string()
 }
 
-fn decode_enum<T: std::str::FromStr<Err = crate::Error>>(s: String) -> crate::Result<T> {
-    s.parse()
+fn decode_enum<T: std::str::FromStr<Err = crate::Error>>(s: impl AsRef<str>) -> crate::Result<T> {
+    s.as_ref().parse()
 }
 
 fn decode_opt_uuid(b: Option<Vec<u8>>) -> crate::Result<Option<Uuid>> {
@@ -323,6 +320,7 @@ struct DbEmailLogEntry {
     error_message: Option<String>,
 }
 
+#[allow(clippy::unnecessary_wraps)] // consistent with other from_db_* functions that do need Result
 fn from_db_vendor_config(r: DbVendorConfig) -> crate::Result<VendorConfig> {
     Ok(VendorConfig {
         id: r.id,
@@ -1304,7 +1302,8 @@ impl SeatStore for SqliteStorage {
         .bind(uuid_to_blob(license_id))
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.0 as u32)
+        Ok(u32::try_from(row.0)
+            .map_err(|_| crate::Error::Corrupt("seat binding count out of u32 range".into()))?)
     }
 
     async fn revoke_seat_binding(&self, id: Uuid, revoked_at: i64) -> crate::Result<()> {
@@ -1754,7 +1753,9 @@ impl EnrollmentStore for SqliteStorage {
         .bind(uuid_to_blob(product_id))
         .fetch_one(&self.pool)
         .await?;
-        Ok(row.0 as u32)
+        Ok(u32::try_from(row.0).map_err(|_| {
+            crate::Error::Corrupt("transferable binding count out of u32 range".into())
+        })?)
     }
 
     async fn set_seat_binding_transfer_pending(

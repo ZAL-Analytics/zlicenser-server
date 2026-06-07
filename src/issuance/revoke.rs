@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use super::handlers::now_ns;
 use crate::storage::{
-    types::{LicenseStatus, RevocationRecord, RevocationSource},
     Storage,
+    types::{LicenseStatus, RevocationRecord, RevocationSource},
 };
 
 pub async fn revoke_license<S: Storage>(

@@ -1,16 +1,16 @@
 use std::sync::Arc;
 
 use axum::{
+    Json,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::issuance::handlers::HandlerContext;
-use crate::storage::{types::RevocationSource, Storage};
+use crate::storage::{Storage, types::RevocationSource};
 
 #[derive(Deserialize)]
 pub struct RevokeBody {

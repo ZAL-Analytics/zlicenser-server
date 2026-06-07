@@ -47,7 +47,7 @@ pub trait PaymentProvider: Send + Sync {
     fn is_test_mode(&self) -> bool;
 
     async fn create_intent(&self, money: Money, metadata: PaymentMetadata)
-        -> Result<PaymentIntent>;
+    -> Result<PaymentIntent>;
     async fn get_intent_status(&self, intent_id: &str) -> Result<IntentStatus>;
     async fn capture_intent(&self, intent_id: &str) -> Result<CaptureConfirmation>;
     async fn cancel_intent(&self, intent_id: &str) -> Result<()>;

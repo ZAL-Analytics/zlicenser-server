@@ -1,26 +1,25 @@
 use std::sync::Arc;
 
 use ed25519_dalek::{Signature, SigningKey, Verifier, VerifyingKey};
-use rand::RngCore;
+use rand::{RngCore, rngs::OsRng};
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use uuid::Uuid;
 
 use super::binding_cert::BindingCert;
 use super::email::EmailTransport;
-use super::secrets::{encrypt_s_issue_at_rest, wrap_s_issue_for_airgap, SIssue, WrappedSecret};
-use super::tsa::{tsa_with_retry, TsaProvider};
+use super::secrets::{SIssue, WrappedSecret, encrypt_s_issue_at_rest, wrap_s_issue_for_airgap};
+use super::tsa::{TsaProvider, tsa_with_retry};
 use crate::payment::{
     CaptureConfirmation, IntentStatus, Money, PaymentMetadata, PaymentProvider as PaymentTrait,
 };
 use crate::storage::{
-    types::{
-        abandon_reason, ConnectivityMode, ConsentRecord as StorageConsentRecord, Customer,
-        EnrollmentSession, EnrollmentSessionUpdate, EnrollmentState, FingerprintSeatBinding,
-        IssuanceSecret, License, LicenseStatus, PaymentStatus, PaymentTransaction, Product,
-        ProviderTier,
-    },
     Storage,
+    types::{
+        ConnectivityMode, ConsentRecord as StorageConsentRecord, Customer, EnrollmentSession,
+        EnrollmentSessionUpdate, EnrollmentState, FingerprintSeatBinding, IssuanceSecret, License,
+        LicenseStatus, PaymentStatus, PaymentTransaction, Product, ProviderTier, abandon_reason,
+    },
 };
 
 pub struct ServerConfig {
@@ -104,6 +103,7 @@ struct GrantRecord {
     wrapped_ciphertext: Option<Vec<u8>>,
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn handle_license_request<S: Storage>(
     ctx: &HandlerContext<S>,
     req: LicenseRequest,
@@ -127,9 +127,10 @@ pub async fn handle_license_request<S: Storage>(
             })?;
 
     if let Some(required_str) = &product.min_client_version_required {
-        let required_ver: semver::Version = required_str
-            .parse()
-            .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+        let required_ver: semver::Version = required_str.parse().unwrap_or_else(|e| {
+            tracing::warn!(raw = %required_str, error = %e, "invalid min_client_version_required in DB, treating as 0.0.0");
+            semver::Version::new(0, 0, 0)
+        });
         if client_ver < required_ver {
             return Err(crate::Error::ClientVersionRejected {
                 required: required_str.clone(),
@@ -139,9 +140,10 @@ pub async fn handle_license_request<S: Storage>(
     }
 
     let client_version_status = if let Some(warn_str) = &product.min_client_version_warning {
-        let warn_ver: semver::Version = warn_str
-            .parse()
-            .unwrap_or_else(|_| semver::Version::new(0, 0, 0));
+        let warn_ver: semver::Version = warn_str.parse().unwrap_or_else(|e| {
+            tracing::warn!(raw = %warn_str, error = %e, "invalid min_client_version_warning in DB, treating as 0.0.0");
+            semver::Version::new(0, 0, 0)
+        });
         if client_ver < warn_ver {
             ClientVersionStatus::UpdateAvailable
         } else {
@@ -155,7 +157,10 @@ pub async fn handle_license_request<S: Storage>(
         .storage
         .count_transferable_seat_bindings(req.product_id)
         .await?;
-    if active_bindings >= product.seat_count as u32 {
+    if active_bindings
+        >= u32::try_from(product.seat_count)
+            .map_err(|_| crate::Error::Corrupt("seat_count out of u32 range".into()))?
+    {
         return Err(crate::Error::SeatLimitReached);
     }
 
@@ -183,7 +188,7 @@ pub async fn handle_license_request<S: Storage>(
     let terms_document_id = terms_doc.as_ref().map(|d| d.id);
 
     let mut offer_nonce = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut offer_nonce);
+    OsRng.fill_bytes(&mut offer_nonce);
 
     let now = now_ns();
     let offer_ttl = ctx.config.offer_ttl_ns.unwrap_or(30 * 60 * 1_000_000_000);
@@ -209,7 +214,7 @@ pub async fn handle_license_request<S: Storage>(
             fingerprint_commitment: req.fingerprint_commitment.clone(),
             customer_pubkey: req.customer_pubkey.to_vec(),
             client_version: req.client_version.clone(),
-            protocol_version: req.protocol_version as i64,
+            protocol_version: i64::from(req.protocol_version),
             state: EnrollmentState::OfferPending,
             offer_nonce: Some(offer_nonce.to_vec()),
             offer_expires_at: Some(expires_at_ns),
@@ -231,6 +236,7 @@ pub async fn handle_license_request<S: Storage>(
     Ok(offer)
 }
 
+#[allow(clippy::too_many_lines)]
 pub async fn handle_license_receipt<S: Storage + 'static>(
     ctx: &HandlerContext<S>,
     session_id: Uuid,
@@ -259,14 +265,16 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
     }
 
     let now = now_ns();
-    if let Some(expires_at) = session.offer_expires_at {
-        if now > expires_at {
-            abandon(&ctx.storage, session_id, abandon_reason::OFFER_EXPIRED).await;
-            if let Some(intent_id) = &session.payment_intent_id {
-                let _ = ctx.payment.cancel_intent(intent_id).await;
-            }
-            return Err(crate::Error::OfferExpired);
+    if let Some(expires_at) = session.offer_expires_at
+        && now > expires_at
+    {
+        abandon(&ctx.storage, session_id, abandon_reason::OFFER_EXPIRED).await;
+        if let Some(intent_id) = &session.payment_intent_id
+            && let Err(e) = ctx.payment.cancel_intent(intent_id).await
+        {
+            tracing::warn!(intent_id = %intent_id, error = %e, "failed to cancel payment intent after offer expiry");
         }
+        return Err(crate::Error::OfferExpired);
     }
 
     let expected_nonce = session
@@ -292,12 +300,9 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
         .payment_intent_id
         .as_deref()
         .ok_or_else(|| crate::Error::Corrupt("session missing payment_intent_id".into()))?;
-    match ctx.payment.get_intent_status(intent_id).await? {
-        IntentStatus::RequiresCapture => {}
-        _ => {
-            abandon(&ctx.storage, session_id, abandon_reason::PAYMENT_FAILED).await;
-            return Err(crate::Error::PaymentNotHeld);
-        }
+    if ctx.payment.get_intent_status(intent_id).await? != IntentStatus::RequiresCapture {
+        abandon(&ctx.storage, session_id, abandon_reason::PAYMENT_FAILED).await;
+        return Err(crate::Error::PaymentNotHeld);
     }
 
     let customer = upsert_customer(&ctx.storage, &session).await?;
@@ -332,8 +337,10 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
             let payment_clone = ctx.payment.clone();
             let intent_id_owned = session.payment_intent_id.clone();
             tokio::spawn(async move {
-                if let Some(id) = intent_id_owned {
-                    let _ = payment_clone.cancel_intent(&id).await;
+                if let Some(id) = intent_id_owned
+                    && let Err(e) = payment_clone.cancel_intent(&id).await
+                {
+                    tracing::warn!(intent_id = %id, error = %e, "failed to cancel payment intent after TSA failure");
                 }
                 abandon(&storage_clone, session_id, abandon_reason::TSA_FAILED).await;
             });
@@ -362,7 +369,8 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
             .try_into()
             .map_err(|_| crate::Error::Corrupt("fingerprint_commitment wrong length".into()))?,
         customer_pubkey: customer_pubkey_bytes,
-        seat_index: seat_index as u32,
+        seat_index: u32::try_from(seat_index)
+            .map_err(|_| crate::Error::Corrupt("seat_index out of u32 range".into()))?,
         issued_at_ns,
         expiry_at_ns,
         connectivity_mode: product.connectivity_mode,
@@ -422,7 +430,9 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
             let storage_clone = ctx.storage.clone();
             let payment_clone = ctx.payment.clone();
             tokio::spawn(async move {
-                let _ = payment_clone.cancel_intent(&intent_id_str).await;
+                if let Err(e) = payment_clone.cancel_intent(&intent_id_str).await {
+                    tracing::warn!(intent_id = %intent_id_str, error = %e, "failed to cancel payment intent after capture failure");
+                }
                 abandon(&storage_clone, session_id, abandon_reason::CAPTURE_FAILED).await;
             });
             return Err(crate::Error::PaymentCaptureFailed(e.to_string()));
@@ -452,14 +462,16 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
     if let Some(transport) = &ctx.email {
         let t = transport.clone();
         tokio::spawn(async move {
-            let _ = t.send_grant_confirmation(license_id).await;
+            if let Err(e) = t.send_grant_confirmation(license_id).await {
+                tracing::warn!(license_id = %license_id, error = %e, "failed to send grant confirmation email");
+            }
         });
     }
 
     deserialize_grant(&grant_bytes)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(crate) async fn issue_all_records<S: Storage>(
     storage: &Arc<S>,
     at_rest_key: &[u8; 32],
@@ -593,7 +605,7 @@ pub(crate) async fn issue_all_records<S: Storage>(
 
 pub(crate) async fn abandon<S: Storage>(storage: &Arc<S>, session_id: Uuid, reason: &str) {
     let now = now_ns();
-    let _ = storage
+    if let Err(e) = storage
         .update_enrollment_session(
             session_id,
             0,
@@ -604,7 +616,10 @@ pub(crate) async fn abandon<S: Storage>(storage: &Arc<S>, session_id: Uuid, reas
                 ..Default::default()
             },
         )
-        .await;
+        .await
+    {
+        tracing::warn!(session_id = %session_id, error = %e, "failed to mark session Abandoned");
+    }
 }
 
 pub(crate) async fn upsert_customer<S: Storage>(
@@ -661,24 +676,27 @@ pub(crate) fn compute_expiry(product: &Product, issued_at_ns: i64) -> Option<i64
     if policy.is_empty() || policy == "never" {
         return None;
     }
-    if let Some(n_str) = policy.strip_suffix('d') {
-        if let Ok(n) = n_str.parse::<i64>() {
-            return Some(issued_at_ns + n * 86_400 * 1_000_000_000);
-        }
+    if let Some(n_str) = policy.strip_suffix('d')
+        && let Ok(n) = n_str.parse::<i64>()
+    {
+        return Some(issued_at_ns + n * 86_400 * 1_000_000_000);
     }
-    if let Some(n_str) = policy.strip_suffix('y') {
-        if let Ok(n) = n_str.parse::<i64>() {
-            return Some(issued_at_ns + n * 365 * 86_400 * 1_000_000_000);
-        }
+    if let Some(n_str) = policy.strip_suffix('y')
+        && let Ok(n) = n_str.parse::<i64>()
+    {
+        return Some(issued_at_ns + n * 365 * 86_400 * 1_000_000_000);
     }
     None
 }
 
 pub(crate) fn now_ns() -> i64 {
-    std::time::SystemTime::now()
+    // Nanoseconds since epoch wraps in year 2262; safe for all practical purposes.
+    #[allow(clippy::cast_possible_truncation)]
+    let ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos() as i64
+        .as_nanos() as i64;
+    ns
 }
 
 fn serialize_request(req: &LicenseRequest) -> crate::Result<Vec<u8>> {

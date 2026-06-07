@@ -4,8 +4,8 @@ use uuid::Uuid;
 
 use super::handlers::now_ns;
 use crate::storage::{
-    types::{LicenseStatus, UpgradePolicy},
     Storage,
+    types::{LicenseStatus, UpgradePolicy},
 };
 
 pub async fn handle_upgrade_activation<S: Storage>(
@@ -38,7 +38,7 @@ pub async fn handle_upgrade_activation<S: Storage>(
         .await?;
 
     match policy.map(|p| p.policy) {
-        Some(UpgradePolicy::AutoApprove) | Some(UpgradePolicy::FreeUpgrade) => {}
+        Some(UpgradePolicy::AutoApprove | UpgradePolicy::FreeUpgrade) => {}
         Some(UpgradePolicy::RequireNewPurchase) => {
             return Err(crate::Error::InvalidTransition(
                 "upgrade requires new purchase".to_owned(),

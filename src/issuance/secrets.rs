@@ -1,7 +1,7 @@
-use aes_gcm::{aead::Aead, Aes256Gcm, Key, KeyInit, Nonce};
+use aes_gcm::{Aes256Gcm, Key, KeyInit, Nonce, aead::Aead};
 use ed25519_dalek::VerifyingKey;
 use hkdf::Hkdf;
-use rand::RngCore;
+use rand::{RngCore, rngs::OsRng};
 use sha2::Sha256;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -15,7 +15,7 @@ pub struct SIssue([u8; 32]);
 impl SIssue {
     pub fn generate() -> Self {
         let mut bytes = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        OsRng.fill_bytes(&mut bytes);
         Self(bytes)
     }
 
@@ -37,7 +37,7 @@ pub fn encrypt_s_issue_at_rest(s_issue: &SIssue, at_rest_key: &[u8; 32]) -> crat
     let cipher = Aes256Gcm::new(key);
 
     let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ct = cipher
@@ -84,7 +84,7 @@ pub fn wrap_s_issue_for_airgap(
     let customer_x25519_bytes: [u8; 32] = vk.to_montgomery().to_bytes();
     let customer_x25519 = PublicKey::from(customer_x25519_bytes);
 
-    let ephemeral_secret = EphemeralSecret::random_from_rng(rand::thread_rng());
+    let ephemeral_secret = EphemeralSecret::random_from_rng(OsRng);
     let ephemeral_pubkey = PublicKey::from(&ephemeral_secret);
 
     let shared_secret = ephemeral_secret.diffie_hellman(&customer_x25519);
@@ -97,7 +97,7 @@ pub fn wrap_s_issue_for_airgap(
     let key = Key::<Aes256Gcm>::from_slice(&wrap_key);
     let cipher = Aes256Gcm::new(key);
     let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    OsRng.fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ct = cipher
         .encrypt(nonce, s_issue.as_bytes().as_ref())

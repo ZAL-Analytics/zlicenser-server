@@ -8,8 +8,8 @@ use uuid::Uuid;
 use zlicenser_server::{
     issuance::{
         handlers::{
-            handle_license_receipt, handle_license_request, ConsentInput, HandlerContext,
-            LicenseOffer, LicenseReceipt, LicenseRequest, ServerConfig,
+            ConsentInput, HandlerContext, LicenseOffer, LicenseReceipt, LicenseRequest,
+            ServerConfig, handle_license_receipt, handle_license_request,
         },
         revoke, transfer,
         tsa::TsaProvider,
@@ -20,8 +20,8 @@ use zlicenser_server::{
         PaymentTier,
     },
     storage::{
-        types::{LicenseStatus, RevocationSource, TransferStatus, UpgradePolicy, UpgradePolicyRow},
         Storage,
+        types::{LicenseStatus, RevocationSource, TransferStatus, UpgradePolicy, UpgradePolicyRow},
     },
 };
 
