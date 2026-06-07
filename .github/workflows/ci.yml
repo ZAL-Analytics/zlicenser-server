@@ -15,33 +15,44 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: zlicenser-server
       - uses: actions/checkout@v4
         with:
           repository: zal-analytics/zlicenser-protocol
           path: zlicenser-protocol
-      - run: sed -i 's|path = "../zlicenser-protocol"|path = "zlicenser-protocol"|' Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "zlicenser-server -> target"
       - run: cargo test -p zlicenser-server
+        working-directory: zlicenser-server
       - run: cargo test -p zlicenser-server --all-features
+        working-directory: zlicenser-server
       - run: cargo test -p zlicenser-server --no-default-features
+        working-directory: zlicenser-server
 
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: zlicenser-server
       - uses: actions/checkout@v4
         with:
           repository: zal-analytics/zlicenser-protocol
           path: zlicenser-protocol
-      - run: sed -i 's|path = "../zlicenser-protocol"|path = "zlicenser-protocol"|' Cargo.toml
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "zlicenser-server -> target"
       - run: cargo clippy --workspace --all-features -- -D warnings
+        working-directory: zlicenser-server
       - run: cargo clippy -p zlicenser-server --no-default-features -- -D warnings
+        working-directory: zlicenser-server
 
   fmt:
     name: Rustfmt
@@ -58,12 +69,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: zlicenser-server
       - uses: actions/checkout@v4
         with:
           repository: zal-analytics/zlicenser-protocol
           path: zlicenser-protocol
-      - run: sed -i 's|path = "../zlicenser-protocol"|path = "zlicenser-protocol"|' Cargo.toml
       - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: zlicenser-server/Cargo.toml
 
   audit:
     name: Audit
