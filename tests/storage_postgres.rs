@@ -165,4 +165,39 @@ mod postgres {
         let f = common::setup(&s).await;
         common::test_email_log(&s, &f).await;
     }
+
+    #[tokio::test]
+    async fn enrollment_session_round_trip() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_enrollment_session_round_trip(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn session_webhook_lookup() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_session_webhook_lookup(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn list_grant_ready_sessions() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_list_grant_ready_sessions(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn enrollment_session_optimistic_conflict() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_enrollment_session_optimistic_conflict(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn transfer_pending_at() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_transfer_pending_at(&s, &f).await;
+    }
 }

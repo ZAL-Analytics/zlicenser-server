@@ -228,12 +228,47 @@ pub trait SecurityStore: Send + Sync {
     ) -> crate::Result<Vec<EmailLogEntry>>;
 }
 
+#[async_trait]
+pub trait EnrollmentStore: Send + Sync {
+    async fn count_transferable_seat_bindings(&self, product_id: Uuid) -> crate::Result<u32>;
+    async fn set_seat_binding_transfer_pending(
+        &self,
+        id: Uuid,
+        pending_at: Option<i64>,
+    ) -> crate::Result<()>;
+    async fn create_enrollment_session(&self, s: &EnrollmentSession) -> crate::Result<()>;
+    async fn get_enrollment_session(&self, id: Uuid) -> crate::Result<Option<EnrollmentSession>>;
+    async fn get_session_by_payment_intent(
+        &self,
+        intent_id: &str,
+    ) -> crate::Result<Option<EnrollmentSession>>;
+    async fn update_enrollment_session(
+        &self,
+        id: Uuid,
+        expected_updated_at: i64,
+        update: EnrollmentSessionUpdate,
+    ) -> crate::Result<()>;
+    async fn list_grant_ready_sessions(&self) -> crate::Result<Vec<EnrollmentSession>>;
+}
+
 pub trait Storage:
-    VendorStore + CustomerStore + LicenseStore + SeatStore + PaymentStore + SecurityStore
+    VendorStore
+    + CustomerStore
+    + LicenseStore
+    + SeatStore
+    + PaymentStore
+    + SecurityStore
+    + EnrollmentStore
 {
 }
 
 impl<T> Storage for T where
-    T: VendorStore + CustomerStore + LicenseStore + SeatStore + PaymentStore + SecurityStore
+    T: VendorStore
+        + CustomerStore
+        + LicenseStore
+        + SeatStore
+        + PaymentStore
+        + SecurityStore
+        + EnrollmentStore
 {
 }

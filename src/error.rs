@@ -12,6 +12,43 @@ pub enum Error {
     Migration(String),
     #[error("corrupt stored data: {0}")]
     Corrupt(String),
+
+    #[error("the license offer has expired; begin a new enrollment")]
+    OfferExpired,
+    #[error("no enrollment session found with the given identifier")]
+    SessionNotFound,
+    #[error("invalid state machine transition: {0}")]
+    InvalidTransition(String),
+    #[error("all seat slots for this license are occupied")]
+    SeatLimitReached,
+    #[error("payment intent is not in the RequiresCapture state")]
+    PaymentNotHeld,
+    #[error("TSA timestamping failed after all retries: {0}")]
+    TsaFailed(String),
+    #[error("payment capture failed: {0}")]
+    PaymentCaptureFailed(String),
+    #[error("payment cancellation failed: {0}")]
+    PaymentCancelFailed(String),
+    #[error("revocation is not supported for air-gapped licenses")]
+    RevocationNotSupported,
+    #[error("client version {got} is below the required minimum {required}")]
+    ClientVersionRejected { required: String, got: String },
+    #[error("offer nonce in receipt does not match the session")]
+    OfferNonceMismatch,
+    #[error("consent record is invalid: {0}")]
+    ConsentInvalid(String),
+    #[error("a transfer request is already pending for this license")]
+    TransferAlreadyPending,
+    #[error("the customer's signature on the receipt is invalid")]
+    InvalidReceiptSignature,
+    #[error("product is not accepting new enrollments")]
+    ProductInactive,
+    #[error("no active fingerprint binding found for this hardware on this license")]
+    BindingNotFound,
+    #[error("secret wrapping failed: {0}")]
+    SecretWrappingFailed(String),
+    #[error("no payment provider configured for this product")]
+    NoPaymentProvider,
 }
 
 #[cfg(feature = "storage-sqlite")]

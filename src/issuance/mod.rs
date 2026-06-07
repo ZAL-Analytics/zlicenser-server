@@ -1,3 +1,9 @@
-pub mod encrypt;
-pub mod secret;
-pub mod sign;
+pub mod binding_cert;
+pub mod email;
+pub mod handlers;
+pub mod recovery;
+pub mod revoke;
+pub mod secrets;
+pub mod transfer;
+pub mod tsa;
+pub mod upgrade;

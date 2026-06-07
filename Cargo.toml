@@ -17,7 +17,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-uuid = { version = "1", features = ["v4"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 async-trait = "0.1"
 
 [patch.crates-io]
@@ -42,7 +42,7 @@ default = ["storage-sqlite", "http-server"]
 http-server = ["dep:axum", "dep:tower", "dep:tower-http"]
 storage-sqlite = ["dep:sqlx", "sqlx?/sqlite", "sqlx?/migrate"]
 storage-postgres = ["dep:sqlx", "sqlx?/postgres", "sqlx?/migrate"]
-payment-stripe = ["dep:async-stripe"]
+payment-stripe = ["dep:reqwest"]
 
 [dependencies]
 zlicenser-protocol = { workspace = true }
@@ -57,14 +57,23 @@ async-trait = { workspace = true }
 
 figment = { version = "0.10", features = ["toml"] }
 
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+x25519-dalek   = { version = "2", features = ["static_secrets"] }
+sha2           = "0.10"
+hkdf           = "0.12"
+aes-gcm        = "0.10"
+rand           = { version = "0.8", features = ["getrandom"] }
+zeroize        = { version = "1", features = ["derive"] }
+semver         = "1"
+
 axum = { version = "0.8", optional = true }
 tower = { version = "0.5", optional = true }
 tower-http = { version = "0.6", features = ["trace", "cors"], optional = true }
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "macros", "uuid"], default-features = false, optional = true }
-async-stripe = { version = "=1.0.0-rc.5", features = ["rustls-tls-webpki-roots", "rustls-ring"], optional = true }
+reqwest = { version = "0.12", features = ["rustls-tls", "json"], default-features = false, optional = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
 insta = "1"
 proptest = "1"
 mockall = "0.13"

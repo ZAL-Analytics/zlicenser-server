@@ -672,6 +672,7 @@ pub struct FingerprintSeatBinding {
     pub bound_at: i64,
     pub last_verified_at: Option<i64>,
     pub revoked_at: Option<i64>,
+    pub transfer_pending_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -769,4 +770,91 @@ pub struct EmailLogEntry {
     pub sent_at: i64,
     pub success: bool,
     pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnrollmentState {
+    OfferPending,
+    ReceiptPending,
+    PaymentHeld,
+    TSAPending,
+    GrantReady,
+    Issued,
+    Abandoned,
+}
+
+impl std::fmt::Display for EnrollmentState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::OfferPending => "OfferPending",
+            Self::ReceiptPending => "ReceiptPending",
+            Self::PaymentHeld => "PaymentHeld",
+            Self::TSAPending => "TSAPending",
+            Self::GrantReady => "GrantReady",
+            Self::Issued => "Issued",
+            Self::Abandoned => "Abandoned",
+        })
+    }
+}
+
+impl std::str::FromStr for EnrollmentState {
+    type Err = crate::Error;
+    fn from_str(s: &str) -> crate::Result<Self> {
+        match s {
+            "OfferPending" => Ok(Self::OfferPending),
+            "ReceiptPending" => Ok(Self::ReceiptPending),
+            "PaymentHeld" => Ok(Self::PaymentHeld),
+            "TSAPending" => Ok(Self::TSAPending),
+            "GrantReady" => Ok(Self::GrantReady),
+            "Issued" => Ok(Self::Issued),
+            "Abandoned" => Ok(Self::Abandoned),
+            _ => Err(crate::Error::Corrupt(format!(
+                "unknown EnrollmentState: {s}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnrollmentSession {
+    pub id: Uuid,
+    pub product_id: Uuid,
+    pub fingerprint_commitment: Vec<u8>,
+    pub customer_pubkey: Vec<u8>,
+    pub client_version: String,
+    pub protocol_version: i64,
+    pub state: EnrollmentState,
+    pub offer_nonce: Option<Vec<u8>>,
+    pub offer_expires_at: Option<i64>,
+    pub terms_document_id: Option<Uuid>,
+    pub request_bytes: Vec<u8>,
+    pub offer_bytes: Option<Vec<u8>>,
+    pub receipt_bytes: Option<Vec<u8>>,
+    pub payment_intent_id: Option<String>,
+    pub payment_captured: bool,
+    pub grant_bytes: Option<Vec<u8>>,
+    pub transfer_request_id: Option<Uuid>,
+    pub license_id: Option<Uuid>,
+    pub abandon_reason: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Default)]
+pub struct EnrollmentSessionUpdate {
+    pub state: Option<EnrollmentState>,
+    pub receipt_bytes: Option<Vec<u8>>,
+    pub payment_intent_id: Option<String>,
+    pub payment_captured: Option<bool>,
+    pub grant_bytes: Option<Vec<u8>>,
+    pub license_id: Option<Option<Uuid>>,
+    pub abandon_reason: Option<String>,
+    pub updated_at: i64,
+}
+
+pub mod abandon_reason {
+    pub const OFFER_EXPIRED: &str = "OfferExpired";
+    pub const PAYMENT_FAILED: &str = "PaymentFailed";
+    pub const TSA_FAILED: &str = "TsaFailed";
+    pub const CAPTURE_FAILED: &str = "CaptureFailed";
 }

@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 use crate::storage::types::*;
 use crate::storage::{
-    CustomerStore, LicenseStore, PaymentStore, SeatStore, SecurityStore, VendorStore,
+    CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore, SecurityStore,
+    VendorStore,
 };
 
 pub struct PostgresStorage {
@@ -172,6 +173,7 @@ struct DbFingerprintSeatBinding {
     bound_at: i64,
     last_verified_at: Option<i64>,
     revoked_at: Option<i64>,
+    transfer_pending_at: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -416,6 +418,7 @@ fn from_db_seat_binding(r: DbFingerprintSeatBinding) -> crate::Result<Fingerprin
         bound_at: r.bound_at,
         last_verified_at: r.last_verified_at,
         revoked_at: r.revoked_at,
+        transfer_pending_at: r.transfer_pending_at,
     })
 }
 
@@ -521,6 +524,57 @@ fn from_db_email_log_entry(r: DbEmailLogEntry) -> crate::Result<EmailLogEntry> {
         sent_at: r.sent_at,
         success: r.success,
         error_message: r.error_message,
+    })
+}
+
+#[derive(sqlx::FromRow)]
+struct DbEnrollmentSession {
+    id: Uuid,
+    product_id: Uuid,
+    fingerprint_commitment: Vec<u8>,
+    customer_pubkey: Vec<u8>,
+    client_version: String,
+    protocol_version: i64,
+    state: String,
+    offer_nonce: Option<Vec<u8>>,
+    offer_expires_at: Option<i64>,
+    terms_document_id: Option<Uuid>,
+    request_bytes: Vec<u8>,
+    offer_bytes: Option<Vec<u8>>,
+    receipt_bytes: Option<Vec<u8>>,
+    payment_intent_id: Option<String>,
+    payment_captured: bool,
+    grant_bytes: Option<Vec<u8>>,
+    transfer_request_id: Option<Uuid>,
+    license_id: Option<Uuid>,
+    abandon_reason: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+}
+
+fn from_db_enrollment_session(r: DbEnrollmentSession) -> crate::Result<EnrollmentSession> {
+    Ok(EnrollmentSession {
+        id: r.id,
+        product_id: r.product_id,
+        fingerprint_commitment: r.fingerprint_commitment,
+        customer_pubkey: r.customer_pubkey,
+        client_version: r.client_version,
+        protocol_version: r.protocol_version,
+        state: decode_enum(r.state)?,
+        offer_nonce: r.offer_nonce,
+        offer_expires_at: r.offer_expires_at,
+        terms_document_id: r.terms_document_id,
+        request_bytes: r.request_bytes,
+        offer_bytes: r.offer_bytes,
+        receipt_bytes: r.receipt_bytes,
+        payment_intent_id: r.payment_intent_id,
+        payment_captured: r.payment_captured,
+        grant_bytes: r.grant_bytes,
+        transfer_request_id: r.transfer_request_id,
+        license_id: r.license_id,
+        abandon_reason: r.abandon_reason,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
     })
 }
 
@@ -1142,8 +1196,8 @@ impl SeatStore for PostgresStorage {
     async fn create_seat_binding(&self, b: &FingerprintSeatBinding) -> crate::Result<()> {
         sqlx::query(
             "INSERT INTO fingerprint_seat_bindings \
-             (id, license_id, fingerprint_commitment, seat_index, bound_at, last_verified_at, revoked_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7)",
+             (id, license_id, fingerprint_commitment, seat_index, bound_at, last_verified_at, revoked_at, transfer_pending_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         )
         .bind(b.id)
         .bind(b.license_id)
@@ -1152,6 +1206,7 @@ impl SeatStore for PostgresStorage {
         .bind(b.bound_at)
         .bind(b.last_verified_at)
         .bind(b.revoked_at)
+        .bind(b.transfer_pending_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1644,6 +1699,185 @@ impl SecurityStore for PostgresStorage {
         .await?
         .into_iter()
         .map(from_db_email_log_entry)
+        .collect()
+    }
+}
+
+#[async_trait]
+impl EnrollmentStore for PostgresStorage {
+    async fn count_transferable_seat_bindings(&self, product_id: Uuid) -> crate::Result<u32> {
+        let row = sqlx::query_as::<_, (i64,)>(
+            "SELECT COUNT(*) FROM fingerprint_seat_bindings fsb \
+             JOIN licenses l ON l.id = fsb.license_id \
+             WHERE l.product_id = $1 AND fsb.revoked_at IS NULL AND fsb.transfer_pending_at IS NULL",
+        )
+        .bind(product_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(row.0 as u32)
+    }
+
+    async fn set_seat_binding_transfer_pending(
+        &self,
+        id: Uuid,
+        pending_at: Option<i64>,
+    ) -> crate::Result<()> {
+        sqlx::query("UPDATE fingerprint_seat_bindings SET transfer_pending_at = $1 WHERE id = $2")
+            .bind(pending_at)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn create_enrollment_session(&self, s: &EnrollmentSession) -> crate::Result<()> {
+        sqlx::query(
+            "INSERT INTO enrollment_sessions \
+             (id, product_id, fingerprint_commitment, customer_pubkey, client_version, \
+              protocol_version, state, offer_nonce, offer_expires_at, terms_document_id, \
+              request_bytes, offer_bytes, receipt_bytes, payment_intent_id, payment_captured, \
+              grant_bytes, transfer_request_id, license_id, abandon_reason, created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)",
+        )
+        .bind(s.id)
+        .bind(s.product_id)
+        .bind(&s.fingerprint_commitment)
+        .bind(&s.customer_pubkey)
+        .bind(&s.client_version)
+        .bind(s.protocol_version)
+        .bind(encode_enum(&s.state))
+        .bind(&s.offer_nonce)
+        .bind(s.offer_expires_at)
+        .bind(s.terms_document_id)
+        .bind(&s.request_bytes)
+        .bind(&s.offer_bytes)
+        .bind(&s.receipt_bytes)
+        .bind(&s.payment_intent_id)
+        .bind(s.payment_captured)
+        .bind(&s.grant_bytes)
+        .bind(s.transfer_request_id)
+        .bind(s.license_id)
+        .bind(&s.abandon_reason)
+        .bind(s.created_at)
+        .bind(s.updated_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn get_enrollment_session(&self, id: Uuid) -> crate::Result<Option<EnrollmentSession>> {
+        sqlx::query_as::<_, DbEnrollmentSession>("SELECT * FROM enrollment_sessions WHERE id = $1")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(from_db_enrollment_session)
+            .transpose()
+    }
+
+    async fn get_session_by_payment_intent(
+        &self,
+        intent_id: &str,
+    ) -> crate::Result<Option<EnrollmentSession>> {
+        sqlx::query_as::<_, DbEnrollmentSession>(
+            "SELECT * FROM enrollment_sessions WHERE payment_intent_id = $1",
+        )
+        .bind(intent_id)
+        .fetch_optional(&self.pool)
+        .await?
+        .map(from_db_enrollment_session)
+        .transpose()
+    }
+
+    async fn update_enrollment_session(
+        &self,
+        id: Uuid,
+        expected_updated_at: i64,
+        update: EnrollmentSessionUpdate,
+    ) -> crate::Result<()> {
+        let mut sets: Vec<String> = Vec::new();
+        let mut param_idx: u32 = 1;
+
+        if update.state.is_some() {
+            sets.push(format!("state = ${param_idx}"));
+            param_idx += 1;
+        }
+        if update.receipt_bytes.is_some() {
+            sets.push(format!("receipt_bytes = ${param_idx}"));
+            param_idx += 1;
+        }
+        if update.payment_intent_id.is_some() {
+            sets.push(format!("payment_intent_id = ${param_idx}"));
+            param_idx += 1;
+        }
+        if update.payment_captured.is_some() {
+            sets.push(format!("payment_captured = ${param_idx}"));
+            param_idx += 1;
+        }
+        if update.grant_bytes.is_some() {
+            sets.push(format!("grant_bytes = ${param_idx}"));
+            param_idx += 1;
+        }
+        if update.license_id.is_some() {
+            sets.push(format!("license_id = ${param_idx}"));
+            param_idx += 1;
+        }
+        if update.abandon_reason.is_some() {
+            sets.push(format!("abandon_reason = ${param_idx}"));
+            param_idx += 1;
+        }
+        sets.push(format!("updated_at = ${param_idx}"));
+        param_idx += 1;
+
+        let sql = format!(
+            "UPDATE enrollment_sessions SET {} WHERE id = ${} AND (updated_at = ${} OR ${} = 0)",
+            sets.join(", "),
+            param_idx,
+            param_idx + 1,
+            param_idx + 2,
+        );
+
+        let mut q = sqlx::query(&sql);
+        if let Some(v) = update.state {
+            q = q.bind(encode_enum(&v));
+        }
+        if let Some(v) = update.receipt_bytes {
+            q = q.bind(v);
+        }
+        if let Some(v) = update.payment_intent_id {
+            q = q.bind(v);
+        }
+        if let Some(v) = update.payment_captured {
+            q = q.bind(v);
+        }
+        if let Some(v) = update.grant_bytes {
+            q = q.bind(v);
+        }
+        if let Some(v) = update.license_id {
+            q = q.bind(v);
+        }
+        if let Some(v) = update.abandon_reason {
+            q = q.bind(v);
+        }
+        q = q.bind(update.updated_at);
+        q = q.bind(id);
+        q = q.bind(expected_updated_at);
+        q = q.bind(expected_updated_at);
+
+        let result = q.execute(&self.pool).await?;
+        if result.rows_affected() == 0 {
+            return Err(crate::Error::Conflict("concurrent update".to_string()));
+        }
+        Ok(())
+    }
+
+    async fn list_grant_ready_sessions(&self) -> crate::Result<Vec<EnrollmentSession>> {
+        sqlx::query_as::<_, DbEnrollmentSession>(
+            "SELECT * FROM enrollment_sessions WHERE state = 'GrantReady'",
+        )
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(from_db_enrollment_session)
         .collect()
     }
 }

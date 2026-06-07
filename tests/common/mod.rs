@@ -114,6 +114,33 @@ pub fn make_seat_binding(
         bound_at: 1_000_000,
         last_verified_at: None,
         revoked_at: None,
+        transfer_pending_at: None,
+    }
+}
+
+pub fn make_enrollment_session(id: Uuid, product_id: Uuid) -> EnrollmentSession {
+    EnrollmentSession {
+        id,
+        product_id,
+        fingerprint_commitment: vec![0xde; 32],
+        customer_pubkey: vec![0xad; 32],
+        client_version: "1.0.0".to_string(),
+        protocol_version: 1,
+        state: EnrollmentState::OfferPending,
+        offer_nonce: None,
+        offer_expires_at: None,
+        terms_document_id: None,
+        request_bytes: vec![0x01; 16],
+        offer_bytes: None,
+        receipt_bytes: None,
+        payment_intent_id: None,
+        payment_captured: false,
+        grant_bytes: None,
+        transfer_request_id: None,
+        license_id: None,
+        abandon_reason: None,
+        created_at: 1_000_000,
+        updated_at: 1_000_000,
     }
 }
 
@@ -711,4 +738,109 @@ pub async fn test_email_log(s: &dyn Storage, f: &Fixture) {
     assert_eq!(log.len(), 1);
     assert_eq!(log[0].email_type, EmailType::GrantConfirmation);
     assert!(log[0].success);
+}
+
+pub async fn test_enrollment_session_round_trip(s: &dyn Storage, f: &Fixture) {
+    let sess_id = uid();
+    let sess = make_enrollment_session(sess_id, f.prod_id);
+    s.create_enrollment_session(&sess).await.unwrap();
+
+    let got = s.get_enrollment_session(sess_id).await.unwrap().unwrap();
+    assert_eq!(got.id, sess_id);
+    assert_eq!(got.state, EnrollmentState::OfferPending);
+    assert_eq!(got.fingerprint_commitment, vec![0xde; 32]);
+    assert!(!got.payment_captured);
+    assert_eq!(got.license_id, None);
+
+    let update = EnrollmentSessionUpdate {
+        state: Some(EnrollmentState::ReceiptPending),
+        receipt_bytes: Some(vec![0xbe; 32]),
+        updated_at: 2_000_000,
+        ..Default::default()
+    };
+    s.update_enrollment_session(sess_id, 1_000_000, update)
+        .await
+        .unwrap();
+
+    let got = s.get_enrollment_session(sess_id).await.unwrap().unwrap();
+    assert_eq!(got.state, EnrollmentState::ReceiptPending);
+    assert_eq!(got.receipt_bytes, Some(vec![0xbe; 32]));
+    assert_eq!(got.updated_at, 2_000_000);
+}
+
+pub async fn test_session_webhook_lookup(s: &dyn Storage, f: &Fixture) {
+    let sess_id = uid();
+    let mut sess = make_enrollment_session(sess_id, f.prod_id);
+    sess.payment_intent_id = Some("pi_test_abc".to_string());
+    s.create_enrollment_session(&sess).await.unwrap();
+
+    let found = s
+        .get_session_by_payment_intent("pi_test_abc")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(found.id, sess_id);
+
+    let none = s
+        .get_session_by_payment_intent("pi_nonexistent")
+        .await
+        .unwrap();
+    assert!(none.is_none());
+}
+
+pub async fn test_list_grant_ready_sessions(s: &dyn Storage, f: &Fixture) {
+    let id1 = uid();
+    let mut s1 = make_enrollment_session(id1, f.prod_id);
+    s1.state = EnrollmentState::GrantReady;
+    s.create_enrollment_session(&s1).await.unwrap();
+
+    let id2 = uid();
+    let s2 = make_enrollment_session(id2, f.prod_id);
+    s.create_enrollment_session(&s2).await.unwrap();
+
+    let ready = s.list_grant_ready_sessions().await.unwrap();
+    assert!(ready.iter().any(|r| r.id == id1));
+    assert!(!ready.iter().any(|r| r.id == id2));
+}
+
+pub async fn test_enrollment_session_optimistic_conflict(s: &dyn Storage, f: &Fixture) {
+    let sess_id = uid();
+    let sess = make_enrollment_session(sess_id, f.prod_id);
+    s.create_enrollment_session(&sess).await.unwrap();
+
+    let update = EnrollmentSessionUpdate {
+        state: Some(EnrollmentState::PaymentHeld),
+        updated_at: 2_000_000,
+        ..Default::default()
+    };
+    let err = s
+        .update_enrollment_session(sess_id, 9_999_999, update)
+        .await
+        .unwrap_err();
+    assert!(matches!(err, zlicenser_server::Error::Conflict(_)));
+
+    let got = s.get_enrollment_session(sess_id).await.unwrap().unwrap();
+    assert_eq!(got.state, EnrollmentState::OfferPending);
+}
+
+pub mod issuance;
+
+pub async fn test_transfer_pending_at(s: &dyn Storage, f: &Fixture) {
+    let b_id = uid();
+    let binding = make_seat_binding(b_id, f.lic_id, vec![0x12; 32]);
+    s.create_seat_binding(&binding).await.unwrap();
+
+    let count_before = s.count_transferable_seat_bindings(f.prod_id).await.unwrap();
+
+    s.set_seat_binding_transfer_pending(b_id, Some(5_000_000))
+        .await
+        .unwrap();
+    let count_after = s.count_transferable_seat_bindings(f.prod_id).await.unwrap();
+    assert_eq!(count_after, count_before - 1);
+
+    s.set_seat_binding_transfer_pending(b_id, None)
+        .await
+        .unwrap();
+    let count_restored = s.count_transferable_seat_bindings(f.prod_id).await.unwrap();
+    assert_eq!(count_restored, count_before);
 }
