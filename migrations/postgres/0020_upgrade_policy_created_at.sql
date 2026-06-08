@@ -1,0 +1,1 @@
+ALTER TABLE upgrade_policies ADD COLUMN created_at BIGINT NOT NULL DEFAULT 0;

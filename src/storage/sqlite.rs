@@ -155,6 +155,7 @@ struct DbProductCustomerField {
     field_key: String,
     required: i64,
     gdpr_basis: String,
+    purpose_description: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -164,6 +165,7 @@ struct DbUpgradePolicy {
     from_version: String,
     to_version: String,
     policy: String,
+    created_at: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -396,6 +398,7 @@ fn from_db_customer_field(r: DbProductCustomerField) -> crate::Result<ProductCus
         field_key: r.field_key,
         required: int_to_bool(r.required),
         gdpr_basis: decode_enum(r.gdpr_basis)?,
+        purpose_description: r.purpose_description,
     })
 }
 
@@ -406,6 +409,7 @@ fn from_db_upgrade_policy(r: DbUpgradePolicy) -> crate::Result<UpgradePolicyRow>
         from_version: r.from_version,
         to_version: r.to_version,
         policy: decode_enum(r.policy)?,
+        created_at: r.created_at,
     })
 }
 
@@ -948,13 +952,15 @@ impl VendorStore for SqliteStorage {
         for f in fields {
             sqlx::query(
                 "INSERT INTO product_customer_fields \
-                 (id, product_id, field_key, required, gdpr_basis) VALUES (?,?,?,?,?)",
+                 (id, product_id, field_key, required, gdpr_basis, purpose_description) \
+                 VALUES (?,?,?,?,?,?)",
             )
             .bind(uuid_to_blob(f.id))
             .bind(&product_id_blob)
             .bind(&f.field_key)
             .bind(bool_to_int(f.required))
             .bind(encode_enum(&f.gdpr_basis))
+            .bind(&f.purpose_description)
             .execute(&mut *tx)
             .await?;
         }
@@ -980,13 +986,14 @@ impl VendorStore for SqliteStorage {
 
     async fn create_upgrade_policy(&self, p: &UpgradePolicyRow) -> crate::Result<()> {
         sqlx::query(
-            "INSERT INTO upgrade_policies (id, product_id, from_version, to_version, policy) VALUES (?,?,?,?,?)",
+            "INSERT INTO upgrade_policies (id, product_id, from_version, to_version, policy, created_at) VALUES (?,?,?,?,?,?)",
         )
         .bind(uuid_to_blob(p.id))
         .bind(uuid_to_blob(p.product_id))
         .bind(&p.from_version)
         .bind(&p.to_version)
         .bind(encode_enum(&p.policy))
+        .bind(p.created_at)
         .execute(&self.pool)
         .await?;
         Ok(())

@@ -2,6 +2,11 @@
 
 use uuid::Uuid;
 
+use zlicenser_server::core::product::{
+    acknowledge_terms_warnings, activate_terms_document, check_activation_gate, find_best_policy,
+    validate_customer_fields, validate_exact_version, validate_field_value,
+    validate_term_declaration, validate_version_pattern,
+};
 use zlicenser_server::storage::*;
 
 pub struct Fixture {
@@ -68,6 +73,22 @@ pub fn make_terms_doc(id: Uuid, product_id: Uuid) -> ProductTermsDocument {
         vendor_acknowledged_findings: None,
         activated_at: None,
         created_at: 1_000_000,
+    }
+}
+
+pub fn make_valid_term_declaration(product_id: Uuid) -> ProductTermDeclaration {
+    ProductTermDeclaration {
+        product_id,
+        warranty: "Days30".to_string(),
+        refund: "EuStatutory14Day".to_string(),
+        revocation: "WithNotice7Day".to_string(),
+        expiry: "Perpetual".to_string(),
+        support_available: true,
+        support_channels: "email".to_string(),
+        response_sla_hours: Some(48),
+        support_scope: Some("BugsOnly".to_string()),
+        support_coverage: Some("9-5 weekdays".to_string()),
+        updates_policy: "Perpetual".to_string(),
     }
 }
 
@@ -302,6 +323,7 @@ pub async fn test_customer_fields(s: &dyn Storage, f: &Fixture) {
         field_key: "company".to_string(),
         required: true,
         gdpr_basis: GdprBasis::Contract,
+        purpose_description: None,
     };
     let f2 = ProductCustomerField {
         id: uid(),
@@ -309,6 +331,7 @@ pub async fn test_customer_fields(s: &dyn Storage, f: &Fixture) {
         field_key: "vat_number".to_string(),
         required: true,
         gdpr_basis: GdprBasis::Contract,
+        purpose_description: None,
     };
     s.replace_customer_fields(f.prod_id, &[f1, f2])
         .await
@@ -322,6 +345,7 @@ pub async fn test_customer_fields(s: &dyn Storage, f: &Fixture) {
         field_key: "phone".to_string(),
         required: true,
         gdpr_basis: GdprBasis::Contract,
+        purpose_description: None,
     };
     s.replace_customer_fields(f.prod_id, &[f3]).await.unwrap();
     let fields = s.get_customer_fields(f.prod_id).await.unwrap();
@@ -337,6 +361,7 @@ pub async fn test_upgrade_policies(s: &dyn Storage, f: &Fixture) {
         from_version: "1.0.0".to_string(),
         to_version: "2.0.0".to_string(),
         policy: UpgradePolicy::FreeUpgrade,
+        created_at: 0,
     };
     s.create_upgrade_policy(&up).await.unwrap();
     let got = s.get_upgrade_policy(upgrade_id).await.unwrap().unwrap();
@@ -845,4 +870,401 @@ pub async fn test_transfer_pending_at(s: &dyn Storage, f: &Fixture) {
         .unwrap();
     let count_restored = s.count_transferable_seat_bindings(f.prod_id).await.unwrap();
     assert_eq!(count_restored, count_before);
+}
+
+//   Phase 3c: product core handler tests
+
+pub async fn test_activation_gate_missing_declarations<S: Storage>(s: &S, f: &Fixture) {
+    // setup() creates the product but no term declarations
+    let err = check_activation_gate(s, f.prod_id).await.unwrap_err();
+    assert!(
+        matches!(err, zlicenser_server::Error::TermDeclarationsMissing),
+        "expected TermDeclarationsMissing, got {err:?}"
+    );
+}
+
+pub async fn test_activation_gate_document_not_ready<S: Storage>(s: &S, _f: &Fixture) {
+    let prod_id = uid();
+    s.create_product(&make_product(prod_id)).await.unwrap();
+    s.upsert_term_declaration(&make_valid_term_declaration(prod_id))
+        .await
+        .unwrap();
+    // no documents at all
+    let err = check_activation_gate(s, prod_id).await.unwrap_err();
+    assert!(
+        matches!(err, zlicenser_server::Error::TermsDocumentNotReady),
+        "expected TermsDocumentNotReady, got {err:?}"
+    );
+}
+
+pub async fn test_activation_gate_customer_fields_invalid<S: Storage>(s: &S, _f: &Fixture) {
+    let prod_id = uid();
+    s.create_product(&make_product(prod_id)).await.unwrap();
+    s.upsert_term_declaration(&make_valid_term_declaration(prod_id))
+        .await
+        .unwrap();
+    s.create_terms_document(&make_terms_doc(uid(), prod_id))
+        .await
+        .unwrap();
+    // national_id with Contract basis is invalid
+    s.replace_customer_fields(
+        prod_id,
+        &[ProductCustomerField {
+            id: uid(),
+            product_id: prod_id,
+            field_key: "national_id".to_string(),
+            required: false,
+            gdpr_basis: GdprBasis::Contract,
+            purpose_description: None,
+        }],
+    )
+    .await
+    .unwrap();
+    let err = check_activation_gate(s, prod_id).await.unwrap_err();
+    assert!(
+        matches!(err, zlicenser_server::Error::CustomerFieldsInvalid),
+        "expected CustomerFieldsInvalid, got {err:?}"
+    );
+}
+
+pub async fn test_activation_gate_document_not_activated<S: Storage>(s: &S, _f: &Fixture) {
+    let prod_id = uid();
+    s.create_product(&make_product(prod_id)).await.unwrap();
+    s.upsert_term_declaration(&make_valid_term_declaration(prod_id))
+        .await
+        .unwrap();
+    s.create_terms_document(&make_terms_doc(uid(), prod_id))
+        .await
+        .unwrap();
+    // no activated document
+    let err = check_activation_gate(s, prod_id).await.unwrap_err();
+    assert!(
+        matches!(err, zlicenser_server::Error::TermsDocumentNotActivated),
+        "expected TermsDocumentNotActivated, got {err:?}"
+    );
+}
+
+pub async fn test_activation_gate_succeeds_when_all_conditions_met<S: Storage>(
+    s: &S,
+    _f: &Fixture,
+) {
+    let prod_id = uid();
+    s.create_product(&make_product(prod_id)).await.unwrap();
+    s.upsert_term_declaration(&make_valid_term_declaration(prod_id))
+        .await
+        .unwrap();
+    let doc_id = uid();
+    s.create_terms_document(&make_terms_doc(doc_id, prod_id))
+        .await
+        .unwrap();
+    s.activate_terms_document(doc_id, 2_000_000).await.unwrap();
+    check_activation_gate(s, prod_id).await.unwrap();
+}
+
+pub async fn test_terms_document_conflict_blocks_activation<S: Storage>(s: &S, f: &Fixture) {
+    let doc_id = uid();
+    s.create_terms_document(&ProductTermsDocument {
+        id: doc_id,
+        product_id: f.prod_id,
+        typst_source: "conflict doc".to_string(),
+        rendered_hash: "cfhash".to_string(),
+        validation_status: TermsValidationStatus::Conflicts,
+        validation_findings: "[{}]".to_string(),
+        vendor_acknowledged_at: None,
+        vendor_acknowledged_findings: None,
+        activated_at: None,
+        created_at: 2_000_000,
+    })
+    .await
+    .unwrap();
+    let err = activate_terms_document(s, doc_id, 3_000_000)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, zlicenser_server::Error::TermsConflictsUnresolved),
+        "expected TermsConflictsUnresolved, got {err:?}"
+    );
+}
+
+pub async fn test_terms_document_warnings_require_acknowledgment<S: Storage>(s: &S, f: &Fixture) {
+    let doc_id = uid();
+    s.create_terms_document(&ProductTermsDocument {
+        id: doc_id,
+        product_id: f.prod_id,
+        typst_source: "warning doc".to_string(),
+        rendered_hash: "wrnhash".to_string(),
+        validation_status: TermsValidationStatus::Warnings,
+        validation_findings: "[{}]".to_string(),
+        vendor_acknowledged_at: None,
+        vendor_acknowledged_findings: None,
+        activated_at: None,
+        created_at: 2_000_000,
+    })
+    .await
+    .unwrap();
+    let err = activate_terms_document(s, doc_id, 3_000_000)
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(err, zlicenser_server::Error::TermsWarningsUnacknowledged),
+        "expected TermsWarningsUnacknowledged, got {err:?}"
+    );
+}
+
+pub async fn test_terms_document_warnings_acknowledged_can_activate<S: Storage>(
+    s: &S,
+    f: &Fixture,
+) {
+    let doc_id = uid();
+    s.create_terms_document(&ProductTermsDocument {
+        id: doc_id,
+        product_id: f.prod_id,
+        typst_source: "warning doc 2".to_string(),
+        rendered_hash: "wrnhash2".to_string(),
+        validation_status: TermsValidationStatus::Warnings,
+        validation_findings: "[{}]".to_string(),
+        vendor_acknowledged_at: None,
+        vendor_acknowledged_findings: None,
+        activated_at: None,
+        created_at: 2_000_000,
+    })
+    .await
+    .unwrap();
+    acknowledge_terms_warnings(s, doc_id, 2_500_000)
+        .await
+        .unwrap();
+    activate_terms_document(s, doc_id, 3_000_000).await.unwrap();
+    let got = s.get_terms_document(doc_id).await.unwrap().unwrap();
+    assert_eq!(got.activated_at, Some(3_000_000));
+}
+
+pub async fn test_terms_document_valid_activates_immediately<S: Storage>(s: &S, f: &Fixture) {
+    let doc_id = uid();
+    s.create_terms_document(&make_terms_doc(doc_id, f.prod_id))
+        .await
+        .unwrap();
+    activate_terms_document(s, doc_id, 3_000_000).await.unwrap();
+    let got = s.get_terms_document(doc_id).await.unwrap().unwrap();
+    assert_eq!(got.activated_at, Some(3_000_000));
+}
+
+// pure-function tests (storage unused)
+
+pub async fn test_term_declaration_valid_values_accepted(_s: &dyn Storage, _f: &Fixture) {
+    let td = make_valid_term_declaration(uid());
+    validate_term_declaration(&td).unwrap();
+}
+
+pub async fn test_term_declaration_invalid_value_rejected(_s: &dyn Storage, _f: &Fixture) {
+    let mut td = make_valid_term_declaration(uid());
+    td.warranty = "UnknownValue".to_string();
+    let err = validate_term_declaration(&td).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            zlicenser_server::Error::InvalidTermDeclarationValue {
+                field: "warranty",
+                ..
+            }
+        ),
+        "expected InvalidTermDeclarationValue for warranty, got {err:?}"
+    );
+}
+
+pub async fn test_customer_fields_national_id_requires_legal_obligation(
+    _s: &dyn Storage,
+    _f: &Fixture,
+) {
+    let fields = vec![ProductCustomerField {
+        id: uid(),
+        product_id: uid(),
+        field_key: "national_id".to_string(),
+        required: true,
+        gdpr_basis: GdprBasis::Contract,
+        purpose_description: None,
+    }];
+    let err = validate_customer_fields(&fields).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            zlicenser_server::Error::NationalIdRequiresLegalObligation
+        ),
+        "expected NationalIdRequiresLegalObligation, got {err:?}"
+    );
+}
+
+pub async fn test_customer_fields_legitimate_interest_requires_purpose(
+    _s: &dyn Storage,
+    _f: &Fixture,
+) {
+    let fields = vec![ProductCustomerField {
+        id: uid(),
+        product_id: uid(),
+        field_key: "phone".to_string(),
+        required: true,
+        gdpr_basis: GdprBasis::LegitimateInterest,
+        purpose_description: None,
+    }];
+    let err = validate_customer_fields(&fields).unwrap_err();
+    assert!(
+        matches!(
+            err,
+            zlicenser_server::Error::LegitimateInterestRequiresPurpose
+        ),
+        "expected LegitimateInterestRequiresPurpose, got {err:?}"
+    );
+}
+
+pub async fn test_customer_fields_unknown_key_rejected(_s: &dyn Storage, _f: &Fixture) {
+    let fields = vec![ProductCustomerField {
+        id: uid(),
+        product_id: uid(),
+        field_key: "unknown_field_xyz".to_string(),
+        required: false,
+        gdpr_basis: GdprBasis::Contract,
+        purpose_description: None,
+    }];
+    let err = validate_customer_fields(&fields).unwrap_err();
+    assert!(
+        matches!(err, zlicenser_server::Error::UnknownFieldKey(_)),
+        "expected UnknownFieldKey, got {err:?}"
+    );
+}
+
+pub async fn test_field_value_phone_e164_valid_and_invalid(_s: &dyn Storage, _f: &Fixture) {
+    validate_field_value("phone", "+31612345678").unwrap();
+    validate_field_value("phone", "+12025551234").unwrap();
+    // missing leading "+"
+    assert!(validate_field_value("phone", "31612345678").is_err());
+    // non-digit after "+"
+    assert!(validate_field_value("phone", "+316abc").is_err());
+    // too short (total < 8)
+    assert!(validate_field_value("phone", "+12345").is_err());
+    // too long (total > 16)
+    assert!(validate_field_value("phone", "+12345678901234567").is_err());
+}
+
+pub async fn test_field_value_eu_vat_valid_and_invalid(_s: &dyn Storage, _f: &Fixture) {
+    validate_field_value("eu_vat_number", "NL123456789B01").unwrap();
+    validate_field_value("eu_vat_number", "DE123456789").unwrap();
+    // country code not in EU member states
+    assert!(validate_field_value("eu_vat_number", "US123456789").is_err());
+    // local part too short (< 2 chars)
+    assert!(validate_field_value("eu_vat_number", "NL1").is_err());
+    // lowercase prefix
+    assert!(validate_field_value("eu_vat_number", "nl123456789").is_err());
+}
+
+pub async fn test_field_value_date_of_birth_age_gate(_s: &dyn Storage, _f: &Fixture) {
+    // 1990 -> age 36+ -> valid
+    validate_field_value("date_of_birth", "1990-06-15").unwrap();
+    // 2024 -> age ~2 -> too young
+    assert!(validate_field_value("date_of_birth", "2024-01-01").is_err());
+    // invalid format
+    assert!(validate_field_value("date_of_birth", "not-a-date").is_err());
+    // invalid month 13
+    assert!(validate_field_value("date_of_birth", "1990-13-01").is_err());
+}
+
+pub async fn test_upgrade_policy_exact_beats_wildcard(_s: &dyn Storage, _f: &Fixture) {
+    let prod_id = uid();
+    let id_wildcard = uid();
+    let id_exact = uid();
+    let policies = vec![
+        UpgradePolicyRow {
+            id: id_wildcard,
+            product_id: prod_id,
+            from_version: "1.2.x".to_string(),
+            to_version: "2.0.0".to_string(),
+            policy: UpgradePolicy::FreeUpgrade,
+            created_at: 100,
+        },
+        UpgradePolicyRow {
+            id: id_exact,
+            product_id: prod_id,
+            from_version: "1.2.3".to_string(),
+            to_version: "2.0.0".to_string(),
+            policy: UpgradePolicy::AutoApprove,
+            created_at: 200,
+        },
+    ];
+    let best = find_best_policy(&policies, "1.2.3", "2.0.0").unwrap();
+    assert_eq!(best.id, id_exact);
+    assert_eq!(best.policy, UpgradePolicy::AutoApprove);
+}
+
+pub async fn test_upgrade_policy_wildcard_fallback(_s: &dyn Storage, _f: &Fixture) {
+    let policies = vec![UpgradePolicyRow {
+        id: uid(),
+        product_id: uid(),
+        from_version: "1.x.x".to_string(),
+        to_version: "2.0.0".to_string(),
+        policy: UpgradePolicy::FreeUpgrade,
+        created_at: 100,
+    }];
+    let best = find_best_policy(&policies, "1.5.3", "2.0.0").unwrap();
+    assert_eq!(best.policy, UpgradePolicy::FreeUpgrade);
+}
+
+pub async fn test_upgrade_policy_no_match_returns_none(_s: &dyn Storage, _f: &Fixture) {
+    let policies = vec![UpgradePolicyRow {
+        id: uid(),
+        product_id: uid(),
+        from_version: "1.2.3".to_string(),
+        to_version: "3.0.0".to_string(),
+        policy: UpgradePolicy::FreeUpgrade,
+        created_at: 100,
+    }];
+    // to_version doesn't match
+    assert!(find_best_policy(&policies, "1.2.3", "2.0.0").is_none());
+}
+
+pub async fn test_upgrade_policy_tie_broken_by_creation_order(_s: &dyn Storage, _f: &Fixture) {
+    let prod_id = uid();
+    let id_early = uid();
+    let id_late = uid();
+    let policies = vec![
+        UpgradePolicyRow {
+            id: id_late,
+            product_id: prod_id,
+            from_version: "1.2.x".to_string(),
+            to_version: "2.0.0".to_string(),
+            policy: UpgradePolicy::AutoApprove,
+            created_at: 200,
+        },
+        UpgradePolicyRow {
+            id: id_early,
+            product_id: prod_id,
+            from_version: "1.2.x".to_string(),
+            to_version: "2.0.0".to_string(),
+            policy: UpgradePolicy::FreeUpgrade,
+            created_at: 100, // earlier -> wins on tie
+        },
+    ];
+    let best = find_best_policy(&policies, "1.2.5", "2.0.0").unwrap();
+    assert_eq!(best.id, id_early);
+}
+
+pub async fn test_upgrade_policy_invalid_from_version_rejected(_s: &dyn Storage, _f: &Fixture) {
+    // valid patterns
+    validate_version_pattern("*").unwrap();
+    validate_version_pattern("1.x.x").unwrap();
+    validate_version_pattern("1.2.x").unwrap();
+    validate_version_pattern("1.2.3").unwrap();
+    // invalid patterns
+    assert!(validate_version_pattern("1.2").is_err());
+    assert!(validate_version_pattern("1.2.a").is_err());
+    assert!(validate_version_pattern("1.2.3.4").is_err());
+}
+
+pub async fn test_upgrade_policy_invalid_to_version_rejected(_s: &dyn Storage, _f: &Fixture) {
+    // valid exact versions
+    validate_exact_version("1.2.3").unwrap();
+    validate_exact_version("0.1.0").unwrap();
+    // wildcards are not allowed in to_version
+    assert!(validate_exact_version("1.2.x").is_err());
+    assert!(validate_exact_version("*").is_err());
+    assert!(validate_exact_version("1.x.x").is_err());
+    // non-semver
+    assert!(validate_exact_version("not-a-version").is_err());
 }

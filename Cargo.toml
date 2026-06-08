@@ -65,6 +65,7 @@ aes-gcm        = "0.10"
 rand           = { version = "0.8", features = ["getrandom"] }
 zeroize        = { version = "1", features = ["derive"] }
 semver         = "1"
+blake3         = "1"
 
 axum = { version = "0.8", optional = true }
 tower = { version = "0.5", optional = true }

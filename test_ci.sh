@@ -51,7 +51,7 @@ fi
 PODMAN_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/podman/podman.sock"
 DOCKER_SOCK="/var/run/docker.sock"
 if [[ -z "${DOCKER_HOST:-}" ]] && [[ ! -S "$PODMAN_SOCK" ]] && [[ ! -S "$DOCKER_SOCK" ]]; then
-  echo -e "${YLW}WARNING: no container socket found — test --all-features will fail (postgres testcontainer needs Podman/Docker)${RST}"
+  echo -e "${YLW}WARNING: no container socket found , test --all-features will fail (postgres testcontainer needs Podman/Docker)${RST}"
   echo -e "  Start Podman: ${BLD}systemctl --user start podman.socket${RST}"
 fi
 

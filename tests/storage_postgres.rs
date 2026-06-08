@@ -200,4 +200,165 @@ mod postgres {
         let f = common::setup(&s).await;
         common::test_transfer_pending_at(&s, &f).await;
     }
+
+    #[tokio::test]
+    async fn activation_gate_missing_declarations() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_activation_gate_missing_declarations(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn activation_gate_document_not_ready() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_activation_gate_document_not_ready(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn activation_gate_customer_fields_invalid() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_activation_gate_customer_fields_invalid(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn activation_gate_document_not_activated() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_activation_gate_document_not_activated(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn activation_gate_succeeds_when_all_conditions_met() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_activation_gate_succeeds_when_all_conditions_met(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn terms_document_conflict_blocks_activation() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_terms_document_conflict_blocks_activation(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn terms_document_warnings_require_acknowledgment() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_terms_document_warnings_require_acknowledgment(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn terms_document_warnings_acknowledged_can_activate() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_terms_document_warnings_acknowledged_can_activate(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn terms_document_valid_activates_immediately() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_terms_document_valid_activates_immediately(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn term_declaration_valid_values_accepted() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_term_declaration_valid_values_accepted(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn term_declaration_invalid_value_rejected() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_term_declaration_invalid_value_rejected(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn customer_fields_national_id_requires_legal_obligation() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_customer_fields_national_id_requires_legal_obligation(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn customer_fields_legitimate_interest_requires_purpose() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_customer_fields_legitimate_interest_requires_purpose(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn customer_fields_unknown_key_rejected() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_customer_fields_unknown_key_rejected(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn field_value_phone_e164_valid_and_invalid() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_field_value_phone_e164_valid_and_invalid(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn field_value_eu_vat_valid_and_invalid() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_field_value_eu_vat_valid_and_invalid(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn field_value_date_of_birth_age_gate() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_field_value_date_of_birth_age_gate(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn upgrade_policy_exact_beats_wildcard() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_upgrade_policy_exact_beats_wildcard(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn upgrade_policy_wildcard_fallback() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_upgrade_policy_wildcard_fallback(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn upgrade_policy_no_match_returns_none() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_upgrade_policy_no_match_returns_none(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn upgrade_policy_tie_broken_by_creation_order() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_upgrade_policy_tie_broken_by_creation_order(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn upgrade_policy_invalid_from_version_rejected() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_upgrade_policy_invalid_from_version_rejected(&s, &f).await;
+    }
+
+    #[tokio::test]
+    async fn upgrade_policy_invalid_to_version_rejected() {
+        let s = store().await;
+        let f = common::setup(&s).await;
+        common::test_upgrade_policy_invalid_to_version_rejected(&s, &f).await;
+    }
 }

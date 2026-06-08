@@ -502,6 +502,7 @@ pub async fn test_upgrade_free<S: Storage + 'static>(storage: Arc<S>) {
         from_version: "1.0.0".to_string(),
         to_version: "2.0.0".to_string(),
         policy: UpgradePolicy::FreeUpgrade,
+        created_at: 0,
     };
     storage.create_upgrade_policy(&policy).await.unwrap();
 

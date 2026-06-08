@@ -49,6 +49,44 @@ pub enum Error {
     SecretWrappingFailed(String),
     #[error("no payment provider configured for this product")]
     NoPaymentProvider,
+
+    // product activation gate
+    #[error("product cannot be activated: term declarations are missing or incomplete")]
+    TermDeclarationsMissing,
+    #[error(
+        "product cannot be activated: no terms document with acceptable validation status exists"
+    )]
+    TermsDocumentNotReady,
+    #[error("product cannot be activated: customer fields configuration is missing or invalid")]
+    CustomerFieldsInvalid,
+    #[error("product cannot be activated: no terms document has been activated yet")]
+    TermsDocumentNotActivated,
+
+    // terms document lifecycle
+    #[error(
+        "terms document has unresolved conflicts; mandatory blocks must be restored before activation"
+    )]
+    TermsConflictsUnresolved,
+    #[error("terms document has unacknowledged warnings; acknowledge before activating")]
+    TermsWarningsUnacknowledged,
+
+    // term declaration field values
+    #[error("invalid term declaration value for field '{field}': '{value}'")]
+    InvalidTermDeclarationValue { field: &'static str, value: String },
+
+    // customer field configuration
+    #[error("national_id field only accepts gdpr_basis = LegalObligation")]
+    NationalIdRequiresLegalObligation,
+    #[error("gdpr_basis LegitimateInterest requires a non-empty purpose_description")]
+    LegitimateInterestRequiresPurpose,
+    #[error("unknown customer field key: '{0}'")]
+    UnknownFieldKey(String),
+    #[error("field '{field}' has invalid value: {reason}")]
+    InvalidFieldValue { field: String, reason: String },
+
+    // upgrade policy
+    #[error("version string '{0}' is not a valid semver version or wildcard pattern")]
+    InvalidVersionPattern(String),
 }
 
 #[cfg(feature = "storage-sqlite")]

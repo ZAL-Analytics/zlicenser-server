@@ -607,6 +607,7 @@ pub struct ProductCustomerField {
     pub field_key: String,
     pub required: bool,
     pub gdpr_basis: GdprBasis,
+    pub purpose_description: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -616,6 +617,8 @@ pub struct UpgradePolicyRow {
     pub from_version: String,
     pub to_version: String,
     pub policy: UpgradePolicy,
+    /// Unix nanoseconds; used as a tie-breaking key when two policies have equal specificity.
+    pub created_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
