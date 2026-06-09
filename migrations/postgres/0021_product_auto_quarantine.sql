@@ -1,0 +1,2 @@
+ALTER TABLE products
+    ADD COLUMN IF NOT EXISTS auto_quarantine_on_critical BOOLEAN NOT NULL DEFAULT TRUE;

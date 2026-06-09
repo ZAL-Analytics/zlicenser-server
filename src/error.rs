@@ -50,6 +50,22 @@ pub enum Error {
     #[error("no payment provider configured for this product")]
     NoPaymentProvider,
 
+    // active session errors
+    #[error("no active or suspect session found")]
+    ActiveSessionNotFound,
+    #[error("the session has expired")]
+    SessionExpired,
+    #[error("the session has been terminated")]
+    SessionTerminated,
+    #[error("session token does not match")]
+    SessionTokenMismatch,
+    #[error("heartbeat HMAC verification failed")]
+    HeartbeatHmacFailed,
+    #[error("multiple active sessions detected; new session rejected")]
+    MultipleSessionsRejected,
+    #[error("heartbeat sequence gap: expected {expected}, received {received}")]
+    HeartbeatSequenceGap { expected: u64, received: u64 },
+
     // product activation gate
     #[error("product cannot be activated: term declarations are missing or incomplete")]
     TermDeclarationsMissing,

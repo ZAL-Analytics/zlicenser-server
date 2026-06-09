@@ -142,17 +142,18 @@ pub trait SeatStore: Send + Sync {
 
     async fn create_session(&self, s: &ActiveSession) -> crate::Result<()>;
     async fn get_session(&self, id: Uuid) -> crate::Result<Option<ActiveSession>>;
-    async fn get_active_session_for_binding(
+    /// Returns the session if its status is `Active` or `Suspect`.
+    async fn get_active_or_suspect_session_for_binding(
         &self,
         binding_id: Uuid,
     ) -> crate::Result<Option<ActiveSession>>;
-    async fn update_session_heartbeat(
+    /// Applies a partial update with optimistic concurrency.
+    async fn update_active_session(
         &self,
         id: Uuid,
-        heartbeat_at: i64,
-        seq_no: i64,
+        expected_updated_at: i64,
+        update: ActiveSessionUpdate,
     ) -> crate::Result<()>;
-    async fn update_session_status(&self, id: Uuid, status: SessionStatus) -> crate::Result<()>;
     async fn expire_sessions_before(&self, expires_at: i64) -> crate::Result<u64>;
 }
 
@@ -194,26 +195,28 @@ pub trait SecurityStore: Send + Sync {
         &self,
         case_id: Uuid,
     ) -> crate::Result<Option<QuarantineCase>>;
-    async fn resolve_quarantine_case(
+    async fn resume_quarantine_case(&self, id: Uuid, resumed_at: i64) -> crate::Result<()>;
+    /// Returns the most recent open quarantine case for the given session.
+    async fn get_active_quarantine_case_for_session(
         &self,
-        id: Uuid,
-        status: QuarantineStatus,
-        resolution: Option<&str>,
-        resolved_at: i64,
-        vendor_note: Option<&str>,
-    ) -> crate::Result<()>;
+        session_id: Uuid,
+    ) -> crate::Result<Option<QuarantineCase>>;
+    /// Returns the most recent open quarantine case for the given binding.
+    async fn get_active_quarantine_case_for_binding(
+        &self,
+        binding_id: Uuid,
+    ) -> crate::Result<Option<QuarantineCase>>;
 
-    async fn create_security_event(&self, e: &SecurityEvent) -> crate::Result<()>;
+    async fn create_security_event(&self, e: &SecurityEventRecord) -> crate::Result<()>;
+    async fn get_security_event_by_event_id(
+        &self,
+        event_id: Uuid,
+    ) -> crate::Result<Option<SecurityEventRecord>>;
     async fn get_security_events_for_license(
         &self,
         license_id: Uuid,
-    ) -> crate::Result<Vec<SecurityEvent>>;
-    async fn mark_security_event_reviewed(
-        &self,
-        id: i64,
-        reviewed_by: &str,
-        reviewed_at: i64,
-    ) -> crate::Result<()>;
+    ) -> crate::Result<Vec<SecurityEventRecord>>;
+    async fn mark_security_event_reviewed(&self, id: i64, reviewed_at: i64) -> crate::Result<()>;
 
     async fn create_revocation_record(&self, r: &RevocationRecord) -> crate::Result<()>;
     async fn get_revocation_record(

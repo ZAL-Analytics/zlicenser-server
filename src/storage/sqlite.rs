@@ -114,6 +114,7 @@ struct DbProduct {
     payment_provider: String,
     min_client_version_warning: Option<String>,
     min_client_version_required: Option<String>,
+    auto_quarantine_on_critical: i64,
     active: i64,
     created_at: i64,
     updated_at: i64,
@@ -263,12 +264,20 @@ struct DbTransferRequest {
 struct DbActiveSession {
     id: Vec<u8>,
     binding_id: Vec<u8>,
-    ephemeral_pubkey: Vec<u8>,
-    issued_at: i64,
-    expires_at: i64,
-    last_heartbeat_at: Option<i64>,
+    license_id: Vec<u8>,
+    product_id: Vec<u8>,
+    session_token: Vec<u8>,
+    session_hmac_key_encrypted: Vec<u8>,
+    heartbeat_interval_secs: i64,
+    heartbeat_grace_secs: i64,
+    shutdown_countdown_secs: i64,
     seq_no: i64,
+    last_heartbeat_at: Option<i64>,
+    expires_at: i64,
     status: String,
+    command_pending: Option<String>,
+    created_at: i64,
+    updated_at: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -278,15 +287,14 @@ struct DbQuarantineCase {
     binding_id: Vec<u8>,
     session_id: Option<Vec<u8>>,
     trigger: String,
-    triggered_at: i64,
-    status: String,
-    resolution: Option<String>,
-    resolved_at: Option<i64>,
-    vendor_note: Option<String>,
+    trigger_event_id: Option<Vec<u8>>,
+    reason: String,
+    created_at: i64,
+    resumed_at: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
-struct DbSecurityEvent {
+struct DbSecurityEventRecord {
     id: i64,
     event_id: Vec<u8>,
     license_id: Vec<u8>,
@@ -295,12 +303,11 @@ struct DbSecurityEvent {
     occurred_at_ns: i64,
     received_at_ns: i64,
     event_type: String,
-    severity: String,
     payload: String,
-    response: String,
-    reviewed_by: Option<String>,
-    reviewed_at: Option<i64>,
+    severity: String,
+    response_type: String,
     case_id: Option<Vec<u8>>,
+    reviewed_at: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -354,6 +361,7 @@ fn from_db_product(r: DbProduct) -> crate::Result<Product> {
         payment_provider: decode_enum(r.payment_provider)?,
         min_client_version_warning: r.min_client_version_warning,
         min_client_version_required: r.min_client_version_required,
+        auto_quarantine_on_critical: int_to_bool(r.auto_quarantine_on_critical),
         active: int_to_bool(r.active),
         created_at: r.created_at,
         updated_at: r.updated_at,
@@ -512,15 +520,33 @@ fn from_db_transfer_request(r: DbTransferRequest) -> crate::Result<TransferReque
 }
 
 fn from_db_active_session(r: DbActiveSession) -> crate::Result<ActiveSession> {
+    let session_token = <[u8; 32]>::try_from(r.session_token.as_slice())
+        .map_err(|_| crate::Error::Corrupt("session_token must be 32 bytes".into()))?;
+    let session_hmac_key_encrypted = <[u8; 60]>::try_from(r.session_hmac_key_encrypted.as_slice())
+        .map_err(|_| crate::Error::Corrupt("session_hmac_key_encrypted must be 60 bytes".into()))?;
     Ok(ActiveSession {
         id: blob_to_uuid(&r.id)?,
         binding_id: blob_to_uuid(&r.binding_id)?,
-        ephemeral_pubkey: r.ephemeral_pubkey,
-        issued_at: r.issued_at,
-        expires_at: r.expires_at,
+        license_id: blob_to_uuid(&r.license_id)?,
+        product_id: blob_to_uuid(&r.product_id)?,
+        session_token,
+        session_hmac_key_encrypted,
+        heartbeat_interval_secs: u32::try_from(r.heartbeat_interval_secs).map_err(|_| {
+            crate::Error::Corrupt("heartbeat_interval_secs out of u32 range".into())
+        })?,
+        heartbeat_grace_secs: u32::try_from(r.heartbeat_grace_secs)
+            .map_err(|_| crate::Error::Corrupt("heartbeat_grace_secs out of u32 range".into()))?,
+        shutdown_countdown_secs: u32::try_from(r.shutdown_countdown_secs).map_err(|_| {
+            crate::Error::Corrupt("shutdown_countdown_secs out of u32 range".into())
+        })?,
+        seq_no: u64::try_from(r.seq_no)
+            .map_err(|_| crate::Error::Corrupt("seq_no out of u64 range".into()))?,
         last_heartbeat_at: r.last_heartbeat_at,
-        seq_no: r.seq_no,
+        expires_at: r.expires_at,
         status: decode_enum(r.status)?,
+        command_pending: r.command_pending.map(decode_enum).transpose()?,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
     })
 }
 
@@ -531,16 +557,15 @@ fn from_db_quarantine_case(r: DbQuarantineCase) -> crate::Result<QuarantineCase>
         binding_id: blob_to_uuid(&r.binding_id)?,
         session_id: decode_opt_uuid(r.session_id)?,
         trigger: decode_enum(r.trigger)?,
-        triggered_at: r.triggered_at,
-        status: decode_enum(r.status)?,
-        resolution: r.resolution,
-        resolved_at: r.resolved_at,
-        vendor_note: r.vendor_note,
+        trigger_event_id: decode_opt_uuid(r.trigger_event_id)?,
+        reason: r.reason,
+        created_at: r.created_at,
+        resumed_at: r.resumed_at,
     })
 }
 
-fn from_db_security_event(r: DbSecurityEvent) -> crate::Result<SecurityEvent> {
-    Ok(SecurityEvent {
+fn from_db_security_event_record(r: DbSecurityEventRecord) -> crate::Result<SecurityEventRecord> {
+    Ok(SecurityEventRecord {
         id: r.id,
         event_id: blob_to_uuid(&r.event_id)?,
         license_id: blob_to_uuid(&r.license_id)?,
@@ -549,12 +574,11 @@ fn from_db_security_event(r: DbSecurityEvent) -> crate::Result<SecurityEvent> {
         occurred_at_ns: r.occurred_at_ns,
         received_at_ns: r.received_at_ns,
         event_type: r.event_type,
-        severity: decode_enum(r.severity)?,
         payload: r.payload,
-        response: decode_enum(r.response)?,
-        reviewed_by: r.reviewed_by,
-        reviewed_at: r.reviewed_at,
+        severity: r.severity,
+        response_type: r.response_type,
         case_id: decode_opt_uuid(r.case_id)?,
+        reviewed_at: r.reviewed_at,
     })
 }
 
@@ -684,8 +708,8 @@ impl VendorStore for SqliteStorage {
               shutdown_countdown_secs, tsa_tier, bundle_version, transfer_policy, \
               pricing_amount, pricing_currency, payment_provider, \
               min_client_version_warning, min_client_version_required, \
-              active, created_at, updated_at) \
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              auto_quarantine_on_critical, active, created_at, updated_at) \
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(uuid_to_blob(p.id))
         .bind(&p.name)
@@ -705,6 +729,7 @@ impl VendorStore for SqliteStorage {
         .bind(encode_enum(&p.payment_provider))
         .bind(&p.min_client_version_warning)
         .bind(&p.min_client_version_required)
+        .bind(bool_to_int(p.auto_quarantine_on_critical))
         .bind(bool_to_int(p.active))
         .bind(p.created_at)
         .bind(p.updated_at)
@@ -739,7 +764,8 @@ impl VendorStore for SqliteStorage {
              heartbeat_grace_secs = ?, shutdown_countdown_secs = ?, tsa_tier = ?, \
              bundle_version = ?, transfer_policy = ?, pricing_amount = ?, \
              pricing_currency = ?, payment_provider = ?, min_client_version_warning = ?, \
-             min_client_version_required = ?, active = ?, updated_at = ? \
+             min_client_version_required = ?, auto_quarantine_on_critical = ?, \
+             active = ?, updated_at = ? \
              WHERE id = ?",
         )
         .bind(&p.name)
@@ -759,6 +785,7 @@ impl VendorStore for SqliteStorage {
         .bind(encode_enum(&p.payment_provider))
         .bind(&p.min_client_version_warning)
         .bind(&p.min_client_version_required)
+        .bind(bool_to_int(p.auto_quarantine_on_critical))
         .bind(bool_to_int(p.active))
         .bind(p.updated_at)
         .bind(uuid_to_blob(p.id))
@@ -1362,19 +1389,32 @@ impl SeatStore for SqliteStorage {
     }
 
     async fn create_session(&self, s: &ActiveSession) -> crate::Result<()> {
+        let seq_no = i64::try_from(s.seq_no)
+            .map_err(|_| crate::Error::Corrupt("seq_no exceeds i64::MAX".into()))?;
         sqlx::query(
             "INSERT INTO active_sessions \
-             (id, binding_id, ephemeral_pubkey, issued_at, expires_at, last_heartbeat_at, seq_no, status) \
-             VALUES (?,?,?,?,?,?,?,?)",
+             (id, binding_id, license_id, product_id, session_token, session_hmac_key_encrypted, \
+              heartbeat_interval_secs, heartbeat_grace_secs, shutdown_countdown_secs, \
+              seq_no, last_heartbeat_at, expires_at, status, command_pending, \
+              created_at, updated_at) \
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(uuid_to_blob(s.id))
         .bind(uuid_to_blob(s.binding_id))
-        .bind(&s.ephemeral_pubkey)
-        .bind(s.issued_at)
-        .bind(s.expires_at)
+        .bind(uuid_to_blob(s.license_id))
+        .bind(uuid_to_blob(s.product_id))
+        .bind(s.session_token.as_ref())
+        .bind(s.session_hmac_key_encrypted.as_ref())
+        .bind(i64::from(s.heartbeat_interval_secs))
+        .bind(i64::from(s.heartbeat_grace_secs))
+        .bind(i64::from(s.shutdown_countdown_secs))
+        .bind(seq_no)
         .bind(s.last_heartbeat_at)
-        .bind(s.seq_no)
+        .bind(s.expires_at)
         .bind(encode_enum(&s.status))
+        .bind(s.command_pending.as_ref().map(encode_enum))
+        .bind(s.created_at)
+        .bind(s.updated_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1389,12 +1429,14 @@ impl SeatStore for SqliteStorage {
             .transpose()
     }
 
-    async fn get_active_session_for_binding(
+    async fn get_active_or_suspect_session_for_binding(
         &self,
         binding_id: Uuid,
     ) -> crate::Result<Option<ActiveSession>> {
         sqlx::query_as::<_, DbActiveSession>(
-            "SELECT * FROM active_sessions WHERE binding_id = ? AND status = 'Active'",
+            "SELECT * FROM active_sessions \
+             WHERE binding_id = ? AND status IN ('Active', 'Suspect') \
+             ORDER BY created_at DESC LIMIT 1",
         )
         .bind(uuid_to_blob(binding_id))
         .fetch_optional(&self.pool)
@@ -1403,33 +1445,47 @@ impl SeatStore for SqliteStorage {
         .transpose()
     }
 
-    async fn update_session_heartbeat(
+    async fn update_active_session(
         &self,
         id: Uuid,
-        heartbeat_at: i64,
-        seq_no: i64,
+        expected_updated_at: i64,
+        update: ActiveSessionUpdate,
     ) -> crate::Result<()> {
-        sqlx::query("UPDATE active_sessions SET last_heartbeat_at = ?, seq_no = ? WHERE id = ?")
-            .bind(heartbeat_at)
-            .bind(seq_no)
-            .bind(uuid_to_blob(id))
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
-    async fn update_session_status(&self, id: Uuid, status: SessionStatus) -> crate::Result<()> {
-        sqlx::query("UPDATE active_sessions SET status = ? WHERE id = ?")
-            .bind(encode_enum(&status))
-            .bind(uuid_to_blob(id))
-            .execute(&self.pool)
-            .await?;
+        use sqlx::QueryBuilder;
+        let mut qb: QueryBuilder<sqlx::Sqlite> =
+            QueryBuilder::new("UPDATE active_sessions SET updated_at = ");
+        qb.push_bind(update.updated_at);
+        if let Some(token) = &update.session_token {
+            qb.push(", session_token = ").push_bind(token.as_ref());
+        }
+        if let Some(seq_no) = update.seq_no {
+            let seq_i64 = i64::try_from(seq_no)
+                .map_err(|_| crate::Error::Corrupt("seq_no exceeds i64::MAX".into()))?;
+            qb.push(", seq_no = ").push_bind(seq_i64);
+        }
+        if let Some(hb_at) = update.last_heartbeat_at {
+            qb.push(", last_heartbeat_at = ").push_bind(hb_at);
+        }
+        if let Some(ref status) = update.status {
+            qb.push(", status = ").push_bind(encode_enum(status));
+        }
+        if let Some(ref cmd_opt) = update.command_pending {
+            qb.push(", command_pending = ")
+                .push_bind(cmd_opt.as_ref().map(encode_enum));
+        }
+        qb.push(" WHERE id = ").push_bind(uuid_to_blob(id));
+        qb.push(" AND updated_at = ").push_bind(expected_updated_at);
+        let result = qb.build().execute(&self.pool).await?;
+        if result.rows_affected() == 0 {
+            return Err(crate::Error::NotFound);
+        }
         Ok(())
     }
 
     async fn expire_sessions_before(&self, expires_at: i64) -> crate::Result<u64> {
         let result = sqlx::query(
-            "UPDATE active_sessions SET status = 'Expired' WHERE expires_at < ? AND status = 'Active'",
+            "UPDATE active_sessions SET status = 'Expired' \
+             WHERE expires_at < ? AND status IN ('Active', 'Suspect')",
         )
         .bind(expires_at)
         .execute(&self.pool)
@@ -1569,22 +1625,22 @@ impl PaymentStore for SqliteStorage {
 impl SecurityStore for SqliteStorage {
     async fn create_quarantine_case(&self, c: &QuarantineCase) -> crate::Result<()> {
         let session_id_blob = c.session_id.map(uuid_to_blob);
+        let trigger_event_id_blob = c.trigger_event_id.map(uuid_to_blob);
         sqlx::query(
             "INSERT INTO quarantine_cases \
-             (id, case_id, binding_id, session_id, trigger, triggered_at, status, \
-              resolution, resolved_at, vendor_note) \
-             VALUES (?,?,?,?,?,?,?,?,?,?)",
+             (id, case_id, binding_id, session_id, trigger, trigger_event_id, \
+              reason, created_at, resumed_at) \
+             VALUES (?,?,?,?,?,?,?,?,?)",
         )
         .bind(uuid_to_blob(c.id))
         .bind(uuid_to_blob(c.case_id))
         .bind(uuid_to_blob(c.binding_id))
         .bind(session_id_blob)
         .bind(encode_enum(&c.trigger))
-        .bind(c.triggered_at)
-        .bind(encode_enum(&c.status))
-        .bind(&c.resolution)
-        .bind(c.resolved_at)
-        .bind(&c.vendor_note)
+        .bind(trigger_event_id_blob)
+        .bind(&c.reason)
+        .bind(c.created_at)
+        .bind(c.resumed_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -1611,35 +1667,53 @@ impl SecurityStore for SqliteStorage {
             .transpose()
     }
 
-    async fn resolve_quarantine_case(
-        &self,
-        id: Uuid,
-        status: QuarantineStatus,
-        resolution: Option<&str>,
-        resolved_at: i64,
-        vendor_note: Option<&str>,
-    ) -> crate::Result<()> {
-        sqlx::query(
-            "UPDATE quarantine_cases SET status = ?, resolution = ?, resolved_at = ?, vendor_note = ? WHERE id = ?",
-        )
-        .bind(encode_enum(&status))
-        .bind(resolution)
-        .bind(resolved_at)
-        .bind(vendor_note)
-        .bind(uuid_to_blob(id))
-        .execute(&self.pool)
-        .await?;
+    async fn resume_quarantine_case(&self, id: Uuid, resumed_at: i64) -> crate::Result<()> {
+        sqlx::query("UPDATE quarantine_cases SET resumed_at = ? WHERE id = ?")
+            .bind(resumed_at)
+            .bind(uuid_to_blob(id))
+            .execute(&self.pool)
+            .await?;
         Ok(())
     }
 
-    async fn create_security_event(&self, e: &SecurityEvent) -> crate::Result<()> {
+    async fn get_active_quarantine_case_for_session(
+        &self,
+        session_id: Uuid,
+    ) -> crate::Result<Option<QuarantineCase>> {
+        sqlx::query_as::<_, DbQuarantineCase>(
+            "SELECT * FROM quarantine_cases WHERE session_id = ? AND resumed_at IS NULL \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(uuid_to_blob(session_id))
+        .fetch_optional(&self.pool)
+        .await?
+        .map(from_db_quarantine_case)
+        .transpose()
+    }
+
+    async fn get_active_quarantine_case_for_binding(
+        &self,
+        binding_id: Uuid,
+    ) -> crate::Result<Option<QuarantineCase>> {
+        sqlx::query_as::<_, DbQuarantineCase>(
+            "SELECT * FROM quarantine_cases WHERE binding_id = ? AND resumed_at IS NULL \
+             ORDER BY created_at DESC LIMIT 1",
+        )
+        .bind(uuid_to_blob(binding_id))
+        .fetch_optional(&self.pool)
+        .await?
+        .map(from_db_quarantine_case)
+        .transpose()
+    }
+
+    async fn create_security_event(&self, e: &SecurityEventRecord) -> crate::Result<()> {
         let session_id_blob = e.session_id.map(uuid_to_blob);
         let case_id_blob = e.case_id.map(uuid_to_blob);
         sqlx::query(
             "INSERT INTO security_events \
              (event_id, license_id, binding_id, session_id, occurred_at_ns, received_at_ns, \
-              event_type, severity, payload, response, reviewed_by, reviewed_at, case_id) \
-             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+              event_type, payload, severity, response_type, case_id, reviewed_at) \
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(uuid_to_blob(e.event_id))
         .bind(uuid_to_blob(e.license_id))
@@ -1648,40 +1722,47 @@ impl SecurityStore for SqliteStorage {
         .bind(e.occurred_at_ns)
         .bind(e.received_at_ns)
         .bind(&e.event_type)
-        .bind(encode_enum(&e.severity))
         .bind(&e.payload)
-        .bind(encode_enum(&e.response))
-        .bind(&e.reviewed_by)
-        .bind(e.reviewed_at)
+        .bind(&e.severity)
+        .bind(&e.response_type)
         .bind(case_id_blob)
+        .bind(e.reviewed_at)
         .execute(&self.pool)
         .await?;
         Ok(())
     }
 
+    async fn get_security_event_by_event_id(
+        &self,
+        event_id: Uuid,
+    ) -> crate::Result<Option<SecurityEventRecord>> {
+        sqlx::query_as::<_, DbSecurityEventRecord>(
+            "SELECT * FROM security_events WHERE event_id = ?",
+        )
+        .bind(uuid_to_blob(event_id))
+        .fetch_optional(&self.pool)
+        .await?
+        .map(from_db_security_event_record)
+        .transpose()
+    }
+
     async fn get_security_events_for_license(
         &self,
         license_id: Uuid,
-    ) -> crate::Result<Vec<SecurityEvent>> {
-        sqlx::query_as::<_, DbSecurityEvent>(
+    ) -> crate::Result<Vec<SecurityEventRecord>> {
+        sqlx::query_as::<_, DbSecurityEventRecord>(
             "SELECT * FROM security_events WHERE license_id = ? ORDER BY occurred_at_ns ASC",
         )
         .bind(uuid_to_blob(license_id))
         .fetch_all(&self.pool)
         .await?
         .into_iter()
-        .map(from_db_security_event)
+        .map(from_db_security_event_record)
         .collect()
     }
 
-    async fn mark_security_event_reviewed(
-        &self,
-        id: i64,
-        reviewed_by: &str,
-        reviewed_at: i64,
-    ) -> crate::Result<()> {
-        sqlx::query("UPDATE security_events SET reviewed_by = ?, reviewed_at = ? WHERE id = ?")
-            .bind(reviewed_by)
+    async fn mark_security_event_reviewed(&self, id: i64, reviewed_at: i64) -> crate::Result<()> {
+        sqlx::query("UPDATE security_events SET reviewed_at = ? WHERE id = ?")
             .bind(reviewed_at)
             .bind(id)
             .execute(&self.pool)

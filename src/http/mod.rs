@@ -1,5 +1,7 @@
 pub mod enroll;
 pub mod revoke;
+pub mod security;
+pub mod sessions;
 pub mod transfer;
 pub mod upgrade;
 pub mod webhook;
@@ -44,6 +46,18 @@ pub fn build_router<S: Storage + Clone + Send + Sync + 'static>(
             "/licenses/{id}/upgrade",
             post(upgrade::upgrade_handler::<S>),
         )
+        .route(
+            "/sessions/establish",
+            post(sessions::establish_handler::<S>),
+        )
+        .route(
+            "/sessions/{session_id}/heartbeat",
+            post(sessions::heartbeat_handler::<S>),
+        )
+        .route(
+            "/security/events",
+            post(security::security_event_handler::<S>),
+        )
         .with_state(ctx)
 }
 
@@ -52,11 +66,21 @@ impl IntoResponse for crate::Error {
         let (status, code) = match &self {
             crate::Error::NotFound
             | crate::Error::SessionNotFound
-            | crate::Error::BindingNotFound => (StatusCode::NOT_FOUND, "not_found"),
+            | crate::Error::BindingNotFound
+            | crate::Error::ActiveSessionNotFound => (StatusCode::NOT_FOUND, "not_found"),
 
             crate::Error::OfferExpired => (StatusCode::GONE, "offer_expired"),
 
-            crate::Error::SeatLimitReached
+            crate::Error::SessionExpired | crate::Error::SessionTerminated => {
+                (StatusCode::GONE, "session_gone")
+            }
+
+            crate::Error::SessionTokenMismatch | crate::Error::HeartbeatHmacFailed => {
+                (StatusCode::UNAUTHORIZED, "unauthorized")
+            }
+
+            crate::Error::MultipleSessionsRejected
+            | crate::Error::SeatLimitReached
             | crate::Error::Conflict(_)
             | crate::Error::TransferAlreadyPending => (StatusCode::CONFLICT, "conflict"),
 
@@ -68,7 +92,8 @@ impl IntoResponse for crate::Error {
                 (StatusCode::BAD_GATEWAY, "upstream_failure")
             }
 
-            crate::Error::ClientVersionRejected { .. }
+            crate::Error::HeartbeatSequenceGap { .. }
+            | crate::Error::ClientVersionRejected { .. }
             | crate::Error::OfferNonceMismatch
             | crate::Error::InvalidReceiptSignature
             | crate::Error::ConsentInvalid(_) => (StatusCode::BAD_REQUEST, "bad_request"),

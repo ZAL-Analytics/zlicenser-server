@@ -10,6 +10,9 @@ pub mod payment;
 pub mod storage;
 
 #[cfg(feature = "http-server")]
+pub mod sessions;
+
+#[cfg(feature = "http-server")]
 pub mod http;
 
 pub use error::Error;

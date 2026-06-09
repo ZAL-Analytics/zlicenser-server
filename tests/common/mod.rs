@@ -47,6 +47,7 @@ pub fn make_product(id: Uuid) -> Product {
         heartbeat_interval_secs: Some(300),
         heartbeat_grace_secs: Some(60),
         shutdown_countdown_secs: Some(600),
+        auto_quarantine_on_critical: false,
         tsa_tier: TsaTier::Standard,
         bundle_version: "1.0.0".to_string(),
         transfer_policy: TransferPolicy::VendorApproval,
@@ -165,16 +166,29 @@ pub fn make_enrollment_session(id: Uuid, product_id: Uuid) -> EnrollmentSession 
     }
 }
 
-pub fn make_session(id: Uuid, binding_id: Uuid) -> ActiveSession {
+pub fn make_session(
+    id: Uuid,
+    binding_id: Uuid,
+    license_id: Uuid,
+    product_id: Uuid,
+) -> ActiveSession {
     ActiveSession {
         id,
         binding_id,
-        ephemeral_pubkey: vec![2u8; 32],
-        issued_at: 1_000_000,
-        expires_at: 9_000_000,
-        last_heartbeat_at: None,
+        license_id,
+        product_id,
+        session_token: [0u8; 32],
+        session_hmac_key_encrypted: [0u8; 60],
+        heartbeat_interval_secs: 300,
+        heartbeat_grace_secs: 60,
+        shutdown_countdown_secs: 600,
         seq_no: 0,
+        last_heartbeat_at: None,
+        expires_at: 9_000_000_000_000,
         status: SessionStatus::Active,
+        command_pending: None,
+        created_at: 1_000_000,
+        updated_at: 1_000_000,
     }
 }
 
@@ -595,49 +609,75 @@ pub async fn test_session(s: &dyn Storage, f: &Fixture) {
         .unwrap();
 
     let sess_id = uid();
-    let sess = make_session(sess_id, b_id);
+    let sess = make_session(sess_id, b_id, f.lic2_id, f.prod_id);
     s.create_session(&sess).await.unwrap();
     let got = s.get_session(sess_id).await.unwrap().unwrap();
     assert_eq!(got.status, SessionStatus::Active);
     assert_eq!(got.seq_no, 0);
 
     let active = s
-        .get_active_session_for_binding(b_id)
+        .get_active_or_suspect_session_for_binding(b_id)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(active.id, sess_id);
 
-    s.update_session_heartbeat(sess_id, 2_000_000, 1)
-        .await
-        .unwrap();
+    s.update_active_session(
+        sess_id,
+        sess.updated_at,
+        ActiveSessionUpdate {
+            last_heartbeat_at: Some(2_000_000),
+            seq_no: Some(1),
+            updated_at: 2_000_000,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     let got = s.get_session(sess_id).await.unwrap().unwrap();
     assert_eq!(got.last_heartbeat_at, Some(2_000_000));
     assert_eq!(got.seq_no, 1);
 
-    s.update_session_status(sess_id, SessionStatus::Suspect)
-        .await
-        .unwrap();
+    s.update_active_session(
+        sess_id,
+        2_000_000,
+        ActiveSessionUpdate {
+            status: Some(SessionStatus::Suspect),
+            updated_at: 2_000_001,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     let got = s.get_session(sess_id).await.unwrap().unwrap();
     assert_eq!(got.status, SessionStatus::Suspect);
 
+    // get_active_or_suspect_session_for_binding returns Some for both Active and Suspect.
     assert!(
-        s.get_active_session_for_binding(b_id)
+        s.get_active_or_suspect_session_for_binding(b_id)
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
 
     let sess2_id = uid();
     let sess2 = ActiveSession {
         id: sess2_id,
         binding_id: b_id,
-        ephemeral_pubkey: vec![3u8; 32],
-        issued_at: 1_000_000,
-        expires_at: 1_100_000,
-        last_heartbeat_at: None,
+        license_id: f.lic2_id,
+        product_id: f.prod_id,
+        session_token: [0u8; 32],
+        session_hmac_key_encrypted: [0u8; 60],
+        heartbeat_interval_secs: 300,
+        heartbeat_grace_secs: 60,
+        shutdown_countdown_secs: 600,
         seq_no: 0,
+        last_heartbeat_at: None,
+        expires_at: 1_100_000,
         status: SessionStatus::Active,
+        command_pending: None,
+        created_at: 1_000_000,
+        updated_at: 1_000_000,
     };
     s.create_session(&sess2).await.unwrap();
     let affected = s.expire_sessions_before(2_000_000).await.unwrap();
@@ -648,7 +688,7 @@ pub async fn test_session(s: &dyn Storage, f: &Fixture) {
 
 pub async fn test_quarantine_case(s: &dyn Storage, f: &Fixture) {
     let sess_id = uid();
-    s.create_session(&make_session(sess_id, f.binding_id))
+    s.create_session(&make_session(sess_id, f.binding_id, f.lic2_id, f.prod_id))
         .await
         .unwrap();
 
@@ -660,15 +700,15 @@ pub async fn test_quarantine_case(s: &dyn Storage, f: &Fixture) {
         binding_id: f.binding_id,
         session_id: Some(sess_id),
         trigger: QuarantineTrigger::MissedHeartbeat,
-        triggered_at: 2_000_000,
-        status: QuarantineStatus::Active,
-        resolution: None,
-        resolved_at: None,
-        vendor_note: None,
+        trigger_event_id: None,
+        reason: "missed heartbeat".to_string(),
+        created_at: 2_000_000,
+        resumed_at: None,
     };
     s.create_quarantine_case(&qc).await.unwrap();
     let got = s.get_quarantine_case(qcase_id).await.unwrap().unwrap();
     assert_eq!(got.trigger, QuarantineTrigger::MissedHeartbeat);
+    assert_eq!(got.resumed_at, None);
 
     let got = s
         .get_quarantine_case_by_case_id(qcase_case_id)
@@ -677,28 +717,19 @@ pub async fn test_quarantine_case(s: &dyn Storage, f: &Fixture) {
         .unwrap();
     assert_eq!(got.id, qcase_id);
 
-    s.resolve_quarantine_case(
-        qcase_id,
-        QuarantineStatus::Resolved,
-        Some("false positive"),
-        3_000_000,
-        Some("vendor reviewed"),
-    )
-    .await
-    .unwrap();
+    s.resume_quarantine_case(qcase_id, 3_000_000).await.unwrap();
     let got = s.get_quarantine_case(qcase_id).await.unwrap().unwrap();
-    assert_eq!(got.status, QuarantineStatus::Resolved);
-    assert_eq!(got.resolution.as_deref(), Some("false positive"));
+    assert_eq!(got.resumed_at, Some(3_000_000));
 }
 
 pub async fn test_security_event(s: &dyn Storage, f: &Fixture) {
     let sess_id = uid();
-    s.create_session(&make_session(sess_id, f.binding_id))
+    s.create_session(&make_session(sess_id, f.binding_id, f.lic2_id, f.prod_id))
         .await
         .unwrap();
 
     let event_id = uid();
-    let ev = SecurityEvent {
+    let ev = SecurityEventRecord {
         id: 0,
         event_id,
         license_id: f.lic2_id,
@@ -707,10 +738,9 @@ pub async fn test_security_event(s: &dyn Storage, f: &Fixture) {
         occurred_at_ns: 2_000_000_000,
         received_at_ns: 2_000_001_000,
         event_type: "HeartbeatMissed".to_string(),
-        severity: SecurityEventSeverity::Warning,
+        severity: "Warning".to_string(),
         payload: "{}".to_string(),
-        response: SecurityEventResponse::Warn,
-        reviewed_by: None,
+        response_type: "Warn".to_string(),
         reviewed_at: None,
         case_id: None,
     };
@@ -720,11 +750,11 @@ pub async fn test_security_event(s: &dyn Storage, f: &Fixture) {
     let auto_id = events[0].id;
     assert!(auto_id > 0);
 
-    s.mark_security_event_reviewed(auto_id, "admin", 3_000_000)
+    s.mark_security_event_reviewed(auto_id, 3_000_000)
         .await
         .unwrap();
     let events = s.get_security_events_for_license(f.lic2_id).await.unwrap();
-    assert_eq!(events[0].reviewed_by.as_deref(), Some("admin"));
+    assert_eq!(events[0].reviewed_at, Some(3_000_000));
 }
 
 pub async fn test_revocation_record(s: &dyn Storage, f: &Fixture) {

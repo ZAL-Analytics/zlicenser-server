@@ -334,94 +334,30 @@ impl std::str::FromStr for QuarantineTrigger {
     }
 }
 
+/// Vendor dashboard action queued for delivery on the next heartbeat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuarantineStatus {
-    Active,
-    Resolved,
-}
-
-impl std::fmt::Display for QuarantineStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Active => "Active",
-            Self::Resolved => "Resolved",
-        })
-    }
-}
-
-impl std::str::FromStr for QuarantineStatus {
-    type Err = crate::Error;
-    fn from_str(s: &str) -> crate::Result<Self> {
-        match s {
-            "Active" => Ok(Self::Active),
-            "Resolved" => Ok(Self::Resolved),
-            _ => Err(crate::Error::Corrupt(format!(
-                "unknown QuarantineStatus: {s}"
-            ))),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SecurityEventSeverity {
-    Info,
-    Warning,
-    Critical,
-}
-
-impl std::fmt::Display for SecurityEventSeverity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            Self::Info => "Info",
-            Self::Warning => "Warning",
-            Self::Critical => "Critical",
-        })
-    }
-}
-
-impl std::str::FromStr for SecurityEventSeverity {
-    type Err = crate::Error;
-    fn from_str(s: &str) -> crate::Result<Self> {
-        match s {
-            "Info" => Ok(Self::Info),
-            "Warning" => Ok(Self::Warning),
-            "Critical" => Ok(Self::Critical),
-            _ => Err(crate::Error::Corrupt(format!(
-                "unknown SecurityEventSeverity: {s}"
-            ))),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SecurityEventResponse {
-    Log,
-    Warn,
-    Quarantine,
+pub enum PendingCommand {
+    Resume,
     Terminate,
 }
 
-impl std::fmt::Display for SecurityEventResponse {
+impl std::fmt::Display for PendingCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
-            Self::Log => "Log",
-            Self::Warn => "Warn",
-            Self::Quarantine => "Quarantine",
+            Self::Resume => "Resume",
             Self::Terminate => "Terminate",
         })
     }
 }
 
-impl std::str::FromStr for SecurityEventResponse {
+impl std::str::FromStr for PendingCommand {
     type Err = crate::Error;
     fn from_str(s: &str) -> crate::Result<Self> {
         match s {
-            "Log" => Ok(Self::Log),
-            "Warn" => Ok(Self::Warn),
-            "Quarantine" => Ok(Self::Quarantine),
+            "Resume" => Ok(Self::Resume),
             "Terminate" => Ok(Self::Terminate),
             _ => Err(crate::Error::Corrupt(format!(
-                "unknown SecurityEventResponse: {s}"
+                "unknown PendingCommand: {s}"
             ))),
         }
     }
@@ -558,6 +494,7 @@ pub struct Product {
     pub heartbeat_interval_secs: Option<i64>,
     pub heartbeat_grace_secs: Option<i64>,
     pub shutdown_countdown_secs: Option<i64>,
+    pub auto_quarantine_on_critical: bool,
     pub tsa_tier: TsaTier,
     pub bundle_version: String,
     pub transfer_policy: TransferPolicy,
@@ -716,30 +653,52 @@ pub struct TransferRequest {
 pub struct ActiveSession {
     pub id: Uuid,
     pub binding_id: Uuid,
-    pub ephemeral_pubkey: Vec<u8>,
-    pub issued_at: i64,
-    pub expires_at: i64,
+    pub license_id: Uuid,
+    pub product_id: Uuid,
+    /// Rolling 32-byte authentication token; rotated on every `HeartbeatAck`.
+    pub session_token: [u8; 32],
+    /// AES-256-GCM encrypted HMAC key: nonce(12) || ciphertext(32) || tag(16) = 60 bytes.
+    pub session_hmac_key_encrypted: [u8; 60],
+    pub heartbeat_interval_secs: u32,
+    pub heartbeat_grace_secs: u32,
+    pub shutdown_countdown_secs: u32,
+    pub seq_no: u64,
     pub last_heartbeat_at: Option<i64>,
-    pub seq_no: i64,
+    pub expires_at: i64,
     pub status: SessionStatus,
+    pub command_pending: Option<PendingCommand>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+/// Partial-update builder used by session handlers to avoid full re-writes.
+#[derive(Default)]
+pub struct ActiveSessionUpdate {
+    pub session_token: Option<[u8; 32]>,
+    pub seq_no: Option<u64>,
+    pub last_heartbeat_at: Option<i64>,
+    pub status: Option<SessionStatus>,
+    pub command_pending: Option<Option<PendingCommand>>,
+    pub updated_at: i64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct QuarantineCase {
     pub id: Uuid,
+    /// Stable external identifier included in signed commands delivered to the shim.
     pub case_id: Uuid,
     pub binding_id: Uuid,
     pub session_id: Option<Uuid>,
     pub trigger: QuarantineTrigger,
-    pub triggered_at: i64,
-    pub status: QuarantineStatus,
-    pub resolution: Option<String>,
-    pub resolved_at: Option<i64>,
-    pub vendor_note: Option<String>,
+    /// UUID of the `SecurityEventRecord` that triggered this case, if any.
+    pub trigger_event_id: Option<Uuid>,
+    pub reason: String,
+    pub created_at: i64,
+    pub resumed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct SecurityEvent {
+pub struct SecurityEventRecord {
     pub id: i64,
     pub event_id: Uuid,
     pub license_id: Uuid,
@@ -747,13 +706,15 @@ pub struct SecurityEvent {
     pub session_id: Option<Uuid>,
     pub occurred_at_ns: i64,
     pub received_at_ns: i64,
+    /// Serialized `SecurityEventType` tag, e.g. `"DebuggerDetected"`.
     pub event_type: String,
-    pub severity: SecurityEventSeverity,
+    /// Full JSON payload of the `SecurityEventType` variant.
     pub payload: String,
-    pub response: SecurityEventResponse,
-    pub reviewed_by: Option<String>,
-    pub reviewed_at: Option<i64>,
+    pub severity: String,
+    /// Which `SecurityResponse` variant was returned: `"Log" | "Warn" | "Quarantine" | "Terminate"`.
+    pub response_type: String,
     pub case_id: Option<Uuid>,
+    pub reviewed_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
