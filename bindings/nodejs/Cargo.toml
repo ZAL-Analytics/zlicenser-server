@@ -2,7 +2,7 @@
 name = "zlicenser-server-nodejs"
 version = "0.1.0"
 edition = "2021"
-authors = ["ZAL Analytics <arsalan@anwari.nl>"]
+authors = ["ZAL Analytics <info@zal-analytics.chl>"]
 publish = false
 
 [lib]

@@ -10,6 +10,7 @@ use crate::storage::{
     VendorStore,
 };
 
+#[derive(Clone)]
 pub struct PostgresStorage {
     pool: PgPool,
 }

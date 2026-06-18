@@ -11,6 +11,7 @@ use crate::storage::{
     VendorStore,
 };
 
+#[derive(Clone)]
 pub struct SqliteStorage {
     pool: SqlitePool,
 }

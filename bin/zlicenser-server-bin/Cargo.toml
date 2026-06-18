@@ -2,7 +2,7 @@
 name = "zlicenser-server-bin"
 version = "0.1.0"
 edition = "2021"
-authors = ["ZAL Analytics <arsalan@anwari.nl>"]
+authors = ["ZAL Analytics <info@zal-analytics.chl>"]
 publish = false
 
 [[bin]]
@@ -10,11 +10,33 @@ name = "zlicenser-server"
 path = "src/main.rs"
 
 [dependencies]
-zlicenser-server = { path = "../../" }
+zlicenser-server = { path = "../../", features = ["storage-sqlite", "storage-postgres", "http-server"] }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["json"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
 
 clap = { version = "4", features = ["derive"] }
 rust-embed = "8"
+axum = "0.8"
+tower_governor = { version = "0.8", features = ["axum"] }
+axum-server = { version = "0.8", features = ["tls-rustls"] }
+toml_edit = "0.25"
+toml = "1"
+bcrypt = "0.19"
+lettre = { version = "0.11", features = ["smtp-transport", "tokio1-rustls", "ring", "webpki-roots", "builder"], default-features = false }
+rpassword = "7"
+dirs = "6"
+base64 = "0.22"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+sha2 = "0.10"
+hkdf = "0.12"
+rand = { version = "0.8", features = ["getrandom"] }
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"

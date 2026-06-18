@@ -880,6 +880,7 @@ pub async fn test_enrollment_session_optimistic_conflict(s: &dyn Storage, f: &Fi
     assert_eq!(got.state, EnrollmentState::OfferPending);
 }
 
+pub mod http;
 pub mod issuance;
 
 pub async fn test_transfer_pending_at(s: &dyn Storage, f: &Fixture) {

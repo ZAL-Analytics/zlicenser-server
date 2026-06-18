@@ -1,4 +1,7 @@
 pub mod enroll;
+pub mod health;
+pub mod middleware;
+pub mod product_info;
 pub mod revoke;
 pub mod security;
 pub mod sessions;
