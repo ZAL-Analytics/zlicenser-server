@@ -3,3 +3,9 @@ node_modules/
 dist/
 build/
 .svelte-kit/
+
+# SQLite database files (generated; migrations/ is the source of truth)
+*.db
+*.sqlite
+*.db-wal
+*.db-shm
