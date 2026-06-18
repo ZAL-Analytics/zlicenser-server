@@ -5,7 +5,6 @@
 #[allow(unused_imports)]
 pub use sqlite_fns::*;
 
-
 // Storage-agnostic HTTP test infrastructure
 #[cfg(feature = "http-server")]
 pub mod with_storage {
@@ -634,7 +633,6 @@ pub mod with_storage {
         );
     }
 }
-
 
 // SQLite thin wrappers, keep original names so http_sqlite.rs is unchanged
 #[cfg(all(feature = "http-server", feature = "storage-sqlite"))]
