@@ -7,8 +7,8 @@ use uuid::Uuid;
 #[allow(clippy::wildcard_imports)] // storage impls use all domain types from this module
 use crate::storage::types::*;
 use crate::storage::{
-    CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore, SecurityStore,
-    VendorStore,
+    AuditStore, CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore,
+    SecurityStore, VendorStore,
 };
 
 #[derive(Clone)]
@@ -309,6 +309,18 @@ struct DbSecurityEventRecord {
     response_type: String,
     case_id: Option<Vec<u8>>,
     reviewed_at: Option<i64>,
+    false_positive_at: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct DbAuditEntry {
+    id: Vec<u8>,
+    occurred_at: i64,
+    auth_method: String,
+    action: String,
+    target_type: String,
+    target_id: Option<Vec<u8>>,
+    detail: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -580,6 +592,19 @@ fn from_db_security_event_record(r: DbSecurityEventRecord) -> crate::Result<Secu
         response_type: r.response_type,
         case_id: decode_opt_uuid(r.case_id)?,
         reviewed_at: r.reviewed_at,
+        false_positive_at: r.false_positive_at,
+    })
+}
+
+fn from_db_audit_entry(r: DbAuditEntry) -> crate::Result<AuditEntry> {
+    Ok(AuditEntry {
+        id: blob_to_uuid(&r.id)?,
+        occurred_at: r.occurred_at,
+        auth_method: decode_enum(r.auth_method)?,
+        action: decode_enum(r.action)?,
+        target_type: decode_enum(r.target_type)?,
+        target_id: decode_opt_uuid(r.target_id)?,
+        detail: r.detail,
     })
 }
 
@@ -1077,6 +1102,26 @@ impl VendorStore for SqliteStorage {
         }
         Ok(())
     }
+
+    async fn delete_product(&self, id: Uuid) -> crate::Result<()> {
+        let result = sqlx::query("DELETE FROM products WHERE id = ?")
+            .bind(uuid_to_blob(id))
+            .execute(&self.pool)
+            .await?;
+        if result.rows_affected() == 0 {
+            return Err(crate::Error::NotFound);
+        }
+        Ok(())
+    }
+
+    async fn count_licenses_for_product(&self, product_id: Uuid) -> crate::Result<u64> {
+        let row = sqlx::query_as::<_, (i64,)>("SELECT COUNT(*) FROM licenses WHERE product_id = ?")
+            .bind(uuid_to_blob(product_id))
+            .fetch_one(&self.pool)
+            .await?;
+        u64::try_from(row.0)
+            .map_err(|_| crate::Error::Corrupt("license count out of u64 range".into()))
+    }
 }
 
 #[async_trait]
@@ -1135,6 +1180,27 @@ impl CustomerStore for SqliteStorage {
         .execute(&self.pool)
         .await?;
         Ok(())
+    }
+
+    async fn list_customers(&self, product_id: Option<Uuid>) -> crate::Result<Vec<Customer>> {
+        if let Some(pid) = product_id {
+            sqlx::query_as::<_, DbCustomer>(
+                "SELECT * FROM customers WHERE product_id = ? ORDER BY created_at ASC",
+            )
+            .bind(uuid_to_blob(pid))
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(from_db_customer)
+            .collect()
+        } else {
+            sqlx::query_as::<_, DbCustomer>("SELECT * FROM customers ORDER BY created_at ASC")
+                .fetch_all(&self.pool)
+                .await?
+                .into_iter()
+                .map(from_db_customer)
+                .collect()
+        }
     }
 }
 
@@ -1264,6 +1330,113 @@ impl LicenseStore for SqliteStorage {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    async fn list_licenses(
+        &self,
+        filter: &LicenseFilter,
+        page: Page,
+    ) -> crate::Result<Paginated<License>> {
+        let mut where_clauses: Vec<&str> = Vec::new();
+        let product_id_blob = filter.product_id.map(uuid_to_blob);
+        let status_str = filter.status.as_ref().map(encode_enum);
+        let mode_str = filter.mode.as_ref().map(encode_enum);
+        let search = filter.search.as_deref().map(|s| format!("%{s}%"));
+
+        if product_id_blob.is_some() {
+            where_clauses.push("l.product_id = ?");
+        }
+        if status_str.is_some() {
+            where_clauses.push("l.status = ?");
+        }
+        if mode_str.is_some() {
+            where_clauses.push("l.connectivity_mode = ?");
+        }
+        if search.is_some() {
+            where_clauses.push("(c.full_name LIKE ? OR c.email LIKE ?)");
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM licenses l JOIN customers c ON c.id = l.customer_id {where_sql}"
+        );
+        let data_sql = format!(
+            "SELECT l.* FROM licenses l JOIN customers c ON c.id = l.customer_id \
+             {where_sql} ORDER BY l.created_at DESC LIMIT ? OFFSET ?"
+        );
+
+        macro_rules! bind_filters {
+            ($q:expr) => {{
+                let mut q = $q;
+                if let Some(ref v) = product_id_blob {
+                    q = q.bind(v.clone());
+                }
+                if let Some(ref v) = status_str {
+                    q = q.bind(v.clone());
+                }
+                if let Some(ref v) = mode_str {
+                    q = q.bind(v.clone());
+                }
+                if let Some(ref v) = search {
+                    q = q.bind(v.clone()).bind(v.clone());
+                }
+                q
+            }};
+        }
+
+        let total_row = bind_filters!(sqlx::query_as::<_, (i64,)>(&count_sql))
+            .fetch_one(&self.pool)
+            .await?;
+        let total = u64::try_from(total_row.0)
+            .map_err(|_| crate::Error::Corrupt("license count out of u64 range".into()))?;
+
+        let items = bind_filters!(sqlx::query_as::<_, DbLicense>(&data_sql))
+            .bind(page.limit())
+            .bind(page.offset())
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(from_db_license)
+            .collect::<crate::Result<Vec<_>>>()?;
+
+        Ok(Paginated {
+            items,
+            total,
+            page: page.page,
+            page_size: page.page_size,
+        })
+    }
+
+    async fn count_active_licenses_per_client_version(
+        &self,
+        product_id: Uuid,
+    ) -> crate::Result<Vec<(String, u64)>> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            bundle_version: String,
+            cnt: i64,
+        }
+
+        sqlx::query_as::<_, Row>(
+            "SELECT bundle_version, COUNT(*) AS cnt FROM licenses \
+             WHERE product_id = ? AND status = 'Active' \
+             GROUP BY bundle_version ORDER BY bundle_version ASC",
+        )
+        .bind(uuid_to_blob(product_id))
+        .fetch_all(&self.pool)
+        .await?
+        .into_iter()
+        .map(|r| {
+            let count = u64::try_from(r.cnt)
+                .map_err(|_| crate::Error::Corrupt("version count out of u64 range".into()))?;
+            Ok((r.bundle_version, count))
+        })
+        .collect()
     }
 }
 
@@ -1620,6 +1793,35 @@ impl PaymentStore for SqliteStorage {
         .await?;
         Ok(())
     }
+
+    async fn list_pending_transfer_requests(
+        &self,
+        product_id: Option<Uuid>,
+    ) -> crate::Result<Vec<TransferRequest>> {
+        if let Some(pid) = product_id {
+            sqlx::query_as::<_, DbTransferRequest>(
+                "SELECT tr.* FROM transfer_requests tr \
+                 JOIN licenses l ON l.id = tr.license_id \
+                 WHERE tr.status = 'Pending' AND l.product_id = ? \
+                 ORDER BY tr.requested_at ASC",
+            )
+            .bind(uuid_to_blob(pid))
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(from_db_transfer_request)
+            .collect()
+        } else {
+            sqlx::query_as::<_, DbTransferRequest>(
+                "SELECT * FROM transfer_requests WHERE status = 'Pending' ORDER BY requested_at ASC",
+            )
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(from_db_transfer_request)
+            .collect()
+        }
+    }
 }
 
 #[async_trait]
@@ -1765,6 +1967,96 @@ impl SecurityStore for SqliteStorage {
     async fn mark_security_event_reviewed(&self, id: i64, reviewed_at: i64) -> crate::Result<()> {
         sqlx::query("UPDATE security_events SET reviewed_at = ? WHERE id = ?")
             .bind(reviewed_at)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn list_security_events(
+        &self,
+        filter: &SecurityEventFilter,
+        page: Page,
+    ) -> crate::Result<Paginated<SecurityEventRecord>> {
+        let mut where_clauses: Vec<&str> = Vec::new();
+        let license_id_blob = filter.license_id.map(uuid_to_blob);
+        let binding_id_blob = filter.binding_id.map(uuid_to_blob);
+        let product_id_blob = filter.product_id.map(uuid_to_blob);
+
+        if license_id_blob.is_some() {
+            where_clauses.push("se.license_id = ?");
+        }
+        if binding_id_blob.is_some() {
+            where_clauses.push("se.binding_id = ?");
+        }
+        if product_id_blob.is_some() {
+            where_clauses.push("l.product_id = ?");
+        }
+
+        let join = if product_id_blob.is_some() {
+            "JOIN licenses l ON l.id = se.license_id"
+        } else {
+            ""
+        };
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let count_sql = format!("SELECT COUNT(*) FROM security_events se {join} {where_sql}");
+        let data_sql = format!(
+            "SELECT se.* FROM security_events se {join} {where_sql} \
+             ORDER BY se.occurred_at_ns DESC LIMIT ? OFFSET ?"
+        );
+
+        macro_rules! bind_security_filters {
+            ($q:expr) => {{
+                let mut q = $q;
+                if let Some(ref v) = license_id_blob {
+                    q = q.bind(v.clone());
+                }
+                if let Some(ref v) = binding_id_blob {
+                    q = q.bind(v.clone());
+                }
+                if let Some(ref v) = product_id_blob {
+                    q = q.bind(v.clone());
+                }
+                q
+            }};
+        }
+
+        let total_row = bind_security_filters!(sqlx::query_as::<_, (i64,)>(&count_sql))
+            .fetch_one(&self.pool)
+            .await?;
+        let total = u64::try_from(total_row.0)
+            .map_err(|_| crate::Error::Corrupt("event count out of u64 range".into()))?;
+
+        let items = bind_security_filters!(sqlx::query_as::<_, DbSecurityEventRecord>(&data_sql))
+            .bind(page.limit())
+            .bind(page.offset())
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(from_db_security_event_record)
+            .collect::<crate::Result<Vec<_>>>()?;
+
+        Ok(Paginated {
+            items,
+            total,
+            page: page.page,
+            page_size: page.page_size,
+        })
+    }
+
+    async fn mark_security_event_false_positive(
+        &self,
+        id: i64,
+        false_positive_at: i64,
+    ) -> crate::Result<()> {
+        sqlx::query("UPDATE security_events SET false_positive_at = ? WHERE id = ?")
+            .bind(false_positive_at)
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -1999,5 +2291,153 @@ impl EnrollmentStore for SqliteStorage {
         .into_iter()
         .map(from_db_enrollment_session)
         .collect()
+    }
+}
+
+#[async_trait]
+impl AuditStore for SqliteStorage {
+    async fn append_audit_entry(&self, entry: &AuditEntry) -> crate::Result<()> {
+        let target_id_blob = entry.target_id.map(uuid_to_blob);
+        sqlx::query(
+            "INSERT INTO vendor_audit_log \
+             (id, occurred_at, auth_method, action, target_type, target_id, detail) \
+             VALUES (?,?,?,?,?,?,?)",
+        )
+        .bind(uuid_to_blob(entry.id))
+        .bind(entry.occurred_at)
+        .bind(encode_enum(&entry.auth_method))
+        .bind(encode_enum(&entry.action))
+        .bind(encode_enum(&entry.target_type))
+        .bind(target_id_blob)
+        .bind(&entry.detail)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_audit_entries(
+        &self,
+        filter: &AuditFilter,
+        page: Page,
+    ) -> crate::Result<Paginated<AuditEntry>> {
+        let mut where_clauses: Vec<&str> = Vec::new();
+        let action_str = filter.action.as_ref().map(encode_enum);
+        let target_id_blob = filter.target_id.map(uuid_to_blob);
+
+        if action_str.is_some() {
+            where_clauses.push("action = ?");
+        }
+        if target_id_blob.is_some() {
+            where_clauses.push("target_id = ?");
+        }
+        if filter.from_ns.is_some() {
+            where_clauses.push("occurred_at >= ?");
+        }
+        if filter.to_ns.is_some() {
+            where_clauses.push("occurred_at <= ?");
+        }
+
+        let where_sql = if where_clauses.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", where_clauses.join(" AND "))
+        };
+
+        let count_sql = format!("SELECT COUNT(*) FROM vendor_audit_log {where_sql}");
+        let data_sql = format!(
+            "SELECT * FROM vendor_audit_log {where_sql} ORDER BY occurred_at DESC LIMIT ? OFFSET ?"
+        );
+
+        macro_rules! bind_audit_filters {
+            ($q:expr) => {{
+                let mut q = $q;
+                if let Some(ref v) = action_str {
+                    q = q.bind(v.clone());
+                }
+                if let Some(ref v) = target_id_blob {
+                    q = q.bind(v.clone());
+                }
+                if let Some(v) = filter.from_ns {
+                    q = q.bind(v);
+                }
+                if let Some(v) = filter.to_ns {
+                    q = q.bind(v);
+                }
+                q
+            }};
+        }
+
+        let total_row = bind_audit_filters!(sqlx::query_as::<_, (i64,)>(&count_sql))
+            .fetch_one(&self.pool)
+            .await?;
+        let total = u64::try_from(total_row.0)
+            .map_err(|_| crate::Error::Corrupt("audit entry count out of u64 range".into()))?;
+
+        let items = bind_audit_filters!(sqlx::query_as::<_, DbAuditEntry>(&data_sql))
+            .bind(page.limit())
+            .bind(page.offset())
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(from_db_audit_entry)
+            .collect::<crate::Result<Vec<_>>>()?;
+
+        Ok(Paginated {
+            items,
+            total,
+            page: page.page,
+            page_size: page.page_size,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn in_memory() -> SqliteStorage {
+        SqliteStorage::in_memory().await.expect("in-memory DB")
+    }
+
+    #[tokio::test]
+    async fn audit_append_and_list() {
+        let store = in_memory().await;
+        let entry = AuditEntry {
+            id: uuid::Uuid::new_v4(),
+            occurred_at: 1_000_000,
+            auth_method: AuditAuthMethod::KeyBased,
+            action: AuditAction::ProductCreate,
+            target_type: AuditTargetType::Product,
+            target_id: None,
+            detail: Some("test".into()),
+        };
+        store.append_audit_entry(&entry).await.unwrap();
+        let page = Page::new(1, 50);
+        let result = store
+            .list_audit_entries(&AuditFilter::default(), page)
+            .await
+            .unwrap();
+        assert_eq!(result.total, 1);
+        assert_eq!(result.items[0].id, entry.id);
+        assert_eq!(result.items[0].action, AuditAction::ProductCreate);
+    }
+
+    #[tokio::test]
+    async fn list_licenses_paginated() {
+        let store = in_memory().await;
+        let result = store
+            .list_licenses(&LicenseFilter::default(), Page::new(1, 50))
+            .await
+            .unwrap();
+        assert_eq!(result.total, 0);
+        assert!(result.items.is_empty());
+    }
+
+    #[tokio::test]
+    async fn count_licenses_for_product_zero() {
+        let store = in_memory().await;
+        let pid = uuid::Uuid::new_v4();
+        let count = store.count_licenses_for_product(pid).await.unwrap();
+        assert_eq!(count, 0);
     }
 }

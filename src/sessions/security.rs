@@ -204,6 +204,7 @@ async fn persist_event<S: Storage>(
             response_type: response_type.into(),
             case_id,
             reviewed_at: None,
+            false_positive_at: None,
         })
         .await
 }

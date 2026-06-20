@@ -715,6 +715,7 @@ pub struct SecurityEventRecord {
     pub response_type: String,
     pub case_id: Option<Uuid>,
     pub reviewed_at: Option<i64>,
+    pub false_positive_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -821,4 +822,247 @@ pub mod abandon_reason {
     pub const PAYMENT_FAILED: &str = "PaymentFailed";
     pub const TSA_FAILED: &str = "TsaFailed";
     pub const CAPTURE_FAILED: &str = "CaptureFailed";
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditAuthMethod {
+    KeyBased,
+    Password,
+    Cli,
+}
+
+impl std::fmt::Display for AuditAuthMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::KeyBased => "KeyBased",
+            Self::Password => "Password",
+            Self::Cli => "CLI",
+        })
+    }
+}
+
+impl std::str::FromStr for AuditAuthMethod {
+    type Err = crate::Error;
+    fn from_str(s: &str) -> crate::Result<Self> {
+        match s {
+            "KeyBased" => Ok(Self::KeyBased),
+            "Password" => Ok(Self::Password),
+            "CLI" => Ok(Self::Cli),
+            _ => Err(crate::Error::Corrupt(format!(
+                "unknown AuditAuthMethod: {s}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditAction {
+    LoginSuccess,
+    LoginFailed,
+    Logout,
+    ProductCreate,
+    ProductUpdate,
+    ProductDelete,
+    ProductActivate,
+    DeclarationsUpdate,
+    TermsDocumentUpload,
+    TermsDocumentAcknowledge,
+    CustomerFieldsUpdate,
+    BundleVersionUpdate,
+    UpgradePolicyCreate,
+    UpgradePolicyDelete,
+    LicenseRevoke,
+    CustomerRevokeAll,
+    TransferApprove,
+    TransferReject,
+    SecurityEventReview,
+    SecurityEventFalsePositive,
+    BindingQuarantine,
+    BindingTerminate,
+    BindingResume,
+}
+
+impl std::fmt::Display for AuditAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::LoginSuccess => "LoginSuccess",
+            Self::LoginFailed => "LoginFailed",
+            Self::Logout => "Logout",
+            Self::ProductCreate => "ProductCreate",
+            Self::ProductUpdate => "ProductUpdate",
+            Self::ProductDelete => "ProductDelete",
+            Self::ProductActivate => "ProductActivate",
+            Self::DeclarationsUpdate => "DeclarationsUpdate",
+            Self::TermsDocumentUpload => "TermsDocumentUpload",
+            Self::TermsDocumentAcknowledge => "TermsDocumentAcknowledge",
+            Self::CustomerFieldsUpdate => "CustomerFieldsUpdate",
+            Self::BundleVersionUpdate => "BundleVersionUpdate",
+            Self::UpgradePolicyCreate => "UpgradePolicyCreate",
+            Self::UpgradePolicyDelete => "UpgradePolicyDelete",
+            Self::LicenseRevoke => "LicenseRevoke",
+            Self::CustomerRevokeAll => "CustomerRevokeAll",
+            Self::TransferApprove => "TransferApprove",
+            Self::TransferReject => "TransferReject",
+            Self::SecurityEventReview => "SecurityEventReview",
+            Self::SecurityEventFalsePositive => "SecurityEventFalsePositive",
+            Self::BindingQuarantine => "BindingQuarantine",
+            Self::BindingTerminate => "BindingTerminate",
+            Self::BindingResume => "BindingResume",
+        })
+    }
+}
+
+impl std::str::FromStr for AuditAction {
+    type Err = crate::Error;
+    fn from_str(s: &str) -> crate::Result<Self> {
+        match s {
+            "LoginSuccess" => Ok(Self::LoginSuccess),
+            "LoginFailed" => Ok(Self::LoginFailed),
+            "Logout" => Ok(Self::Logout),
+            "ProductCreate" => Ok(Self::ProductCreate),
+            "ProductUpdate" => Ok(Self::ProductUpdate),
+            "ProductDelete" => Ok(Self::ProductDelete),
+            "ProductActivate" => Ok(Self::ProductActivate),
+            "DeclarationsUpdate" => Ok(Self::DeclarationsUpdate),
+            "TermsDocumentUpload" => Ok(Self::TermsDocumentUpload),
+            "TermsDocumentAcknowledge" => Ok(Self::TermsDocumentAcknowledge),
+            "CustomerFieldsUpdate" => Ok(Self::CustomerFieldsUpdate),
+            "BundleVersionUpdate" => Ok(Self::BundleVersionUpdate),
+            "UpgradePolicyCreate" => Ok(Self::UpgradePolicyCreate),
+            "UpgradePolicyDelete" => Ok(Self::UpgradePolicyDelete),
+            "LicenseRevoke" => Ok(Self::LicenseRevoke),
+            "CustomerRevokeAll" => Ok(Self::CustomerRevokeAll),
+            "TransferApprove" => Ok(Self::TransferApprove),
+            "TransferReject" => Ok(Self::TransferReject),
+            "SecurityEventReview" => Ok(Self::SecurityEventReview),
+            "SecurityEventFalsePositive" => Ok(Self::SecurityEventFalsePositive),
+            "BindingQuarantine" => Ok(Self::BindingQuarantine),
+            "BindingTerminate" => Ok(Self::BindingTerminate),
+            "BindingResume" => Ok(Self::BindingResume),
+            _ => Err(crate::Error::Corrupt(format!("unknown AuditAction: {s}"))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditTargetType {
+    Product,
+    TermsDocument,
+    Customer,
+    License,
+    Transfer,
+    SecurityEvent,
+    Binding,
+    Vendor,
+    Auth,
+}
+
+impl std::fmt::Display for AuditTargetType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Product => "product",
+            Self::TermsDocument => "terms_document",
+            Self::Customer => "customer",
+            Self::License => "license",
+            Self::Transfer => "transfer",
+            Self::SecurityEvent => "security_event",
+            Self::Binding => "binding",
+            Self::Vendor => "vendor",
+            Self::Auth => "auth",
+        })
+    }
+}
+
+impl std::str::FromStr for AuditTargetType {
+    type Err = crate::Error;
+    fn from_str(s: &str) -> crate::Result<Self> {
+        match s {
+            "product" => Ok(Self::Product),
+            "terms_document" => Ok(Self::TermsDocument),
+            "customer" => Ok(Self::Customer),
+            "license" => Ok(Self::License),
+            "transfer" => Ok(Self::Transfer),
+            "security_event" => Ok(Self::SecurityEvent),
+            "binding" => Ok(Self::Binding),
+            "vendor" => Ok(Self::Vendor),
+            "auth" => Ok(Self::Auth),
+            _ => Err(crate::Error::Corrupt(format!(
+                "unknown AuditTargetType: {s}"
+            ))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuditEntry {
+    pub id: Uuid,
+    pub occurred_at: i64,
+    pub auth_method: AuditAuthMethod,
+    pub action: AuditAction,
+    pub target_type: AuditTargetType,
+    pub target_id: Option<Uuid>,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AuditFilter {
+    pub action: Option<AuditAction>,
+    pub target_id: Option<Uuid>,
+    pub from_ns: Option<i64>,
+    pub to_ns: Option<i64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Page {
+    pub page: u32,
+    pub page_size: u32,
+}
+
+impl Page {
+    pub fn new(page: u32, page_size: u32) -> Self {
+        Self {
+            page: page.max(1),
+            page_size: page_size.clamp(1, 200),
+        }
+    }
+
+    pub fn offset(self) -> i64 {
+        i64::from((self.page - 1) * self.page_size)
+    }
+
+    pub fn limit(self) -> i64 {
+        i64::from(self.page_size)
+    }
+}
+
+impl Default for Page {
+    fn default() -> Self {
+        Self {
+            page: 1,
+            page_size: 50,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Paginated<T> {
+    pub items: Vec<T>,
+    pub total: u64,
+    pub page: u32,
+    pub page_size: u32,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LicenseFilter {
+    pub product_id: Option<Uuid>,
+    pub status: Option<LicenseStatus>,
+    pub mode: Option<ConnectivityMode>,
+    pub search: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SecurityEventFilter {
+    pub license_id: Option<Uuid>,
+    pub binding_id: Option<Uuid>,
+    pub product_id: Option<Uuid>,
 }

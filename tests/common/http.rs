@@ -27,8 +27,8 @@ pub mod with_storage {
             product_info::{ProductInfoState, product_info_handler},
         },
         storage::{
-            CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore, SecurityStore,
-            Storage, VendorStore, types::*,
+            AuditStore, CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore,
+            SecurityStore, Storage, VendorStore, types::*,
         },
     };
 
@@ -162,6 +162,12 @@ pub mod with_storage {
         async fn delete_upgrade_policy(&self, _: Uuid) -> zlicenser_server::Result<()> {
             unimplemented!()
         }
+        async fn delete_product(&self, _: Uuid) -> zlicenser_server::Result<()> {
+            unimplemented!()
+        }
+        async fn count_licenses_for_product(&self, _: Uuid) -> zlicenser_server::Result<u64> {
+            unimplemented!()
+        }
     }
 
     #[async_trait]
@@ -180,6 +186,9 @@ pub mod with_storage {
             unimplemented!()
         }
         async fn update_customer(&self, _: &Customer) -> zlicenser_server::Result<()> {
+            unimplemented!()
+        }
+        async fn list_customers(&self, _: Option<Uuid>) -> zlicenser_server::Result<Vec<Customer>> {
             unimplemented!()
         }
     }
@@ -224,6 +233,19 @@ pub mod with_storage {
             &self,
             _: Uuid,
         ) -> zlicenser_server::Result<Vec<ConsentRecord>> {
+            unimplemented!()
+        }
+        async fn list_licenses(
+            &self,
+            _: &LicenseFilter,
+            _: Page,
+        ) -> zlicenser_server::Result<Paginated<License>> {
+            unimplemented!()
+        }
+        async fn count_active_licenses_per_client_version(
+            &self,
+            _: Uuid,
+        ) -> zlicenser_server::Result<Vec<(String, u64)>> {
             unimplemented!()
         }
     }
@@ -351,6 +373,12 @@ pub mod with_storage {
         ) -> zlicenser_server::Result<Vec<TransferRequest>> {
             unimplemented!()
         }
+        async fn list_pending_transfer_requests(
+            &self,
+            _: Option<Uuid>,
+        ) -> zlicenser_server::Result<Vec<TransferRequest>> {
+            unimplemented!()
+        }
         async fn resolve_transfer_request(
             &self,
             _: Uuid,
@@ -413,6 +441,20 @@ pub mod with_storage {
             unimplemented!()
         }
         async fn mark_security_event_reviewed(
+            &self,
+            _: i64,
+            _: i64,
+        ) -> zlicenser_server::Result<()> {
+            unimplemented!()
+        }
+        async fn list_security_events(
+            &self,
+            _: &SecurityEventFilter,
+            _: Page,
+        ) -> zlicenser_server::Result<Paginated<SecurityEventRecord>> {
+            unimplemented!()
+        }
+        async fn mark_security_event_false_positive(
             &self,
             _: i64,
             _: i64,
@@ -483,6 +525,20 @@ pub mod with_storage {
         async fn list_grant_ready_sessions(
             &self,
         ) -> zlicenser_server::Result<Vec<EnrollmentSession>> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl AuditStore for BrokenDb {
+        async fn append_audit_entry(&self, _: &AuditEntry) -> zlicenser_server::Result<()> {
+            unimplemented!()
+        }
+        async fn list_audit_entries(
+            &self,
+            _: &AuditFilter,
+            _: Page,
+        ) -> zlicenser_server::Result<Paginated<AuditEntry>> {
             unimplemented!()
         }
     }

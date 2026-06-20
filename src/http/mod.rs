@@ -1,3 +1,4 @@
+pub mod dashboard;
 pub mod enroll;
 pub mod health;
 pub mod middleware;
@@ -78,14 +79,20 @@ impl IntoResponse for crate::Error {
                 (StatusCode::GONE, "session_gone")
             }
 
-            crate::Error::SessionTokenMismatch | crate::Error::HeartbeatHmacFailed => {
-                (StatusCode::UNAUTHORIZED, "unauthorized")
+            crate::Error::SessionTokenMismatch
+            | crate::Error::HeartbeatHmacFailed
+            | crate::Error::Unauthorized
+            | crate::Error::DashboardAuthFailed => (StatusCode::UNAUTHORIZED, "unauthorized"),
+
+            crate::Error::DashboardPasswordNotConfigured => {
+                (StatusCode::FORBIDDEN, "not_configured")
             }
 
             crate::Error::MultipleSessionsRejected
             | crate::Error::SeatLimitReached
             | crate::Error::Conflict(_)
-            | crate::Error::TransferAlreadyPending => (StatusCode::CONFLICT, "conflict"),
+            | crate::Error::TransferAlreadyPending
+            | crate::Error::LicenseHasBeenIssued => (StatusCode::CONFLICT, "conflict"),
 
             crate::Error::InvalidTransition(_) => (StatusCode::CONFLICT, "invalid_transition"),
 

@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Context as _;
 use axum::{routing::get, Router};
-use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64_URL, Engine as _};
 use ed25519_dalek::SigningKey;
 use hkdf::Hkdf;
 use rand::rngs::OsRng;
@@ -20,6 +20,10 @@ use tower_governor::{
 use zlicenser_server::{
     http::{
         build_router,
+        dashboard::{
+            build_dashboard_challenge_router, build_dashboard_login_verify_router,
+            build_dashboard_router, state::DashboardState,
+        },
         health::{health_handler, HealthState},
         product_info::{product_info_handler, ProductInfoState},
     },
@@ -257,7 +261,7 @@ where
         storage: Arc::clone(&storage),
         payment: Arc::new(NoopPaymentProvider),
         tsa: Arc::new(NoopTsaProvider),
-        signing_key: Arc::new(signing_key),
+        signing_key: Arc::new(signing_key.clone()),
         at_rest_key: Arc::new(at_rest_key),
         config: server_cfg,
         email,
@@ -286,6 +290,43 @@ where
     );
     let rate_limit = GovernorLayer::new(governor_cfg);
 
+    // Dashboard rate limiting: challenge → 60/min (1/sec, burst 60), login+verify → 10/15min (1/90sec, burst 10)
+    let mut challenge_builder = GovernorConfigBuilder::default();
+    challenge_builder.per_second(1);
+    challenge_builder.burst_size(60);
+    let challenge_governor_cfg = Arc::new(
+        challenge_builder
+            .key_extractor(PeerIpKeyExtractor)
+            .finish()
+            .context("invalid challenge rate limit configuration")?,
+    );
+    let challenge_rate_limit = GovernorLayer::new(challenge_governor_cfg);
+
+    let mut login_builder = GovernorConfigBuilder::default();
+    login_builder.per_second(90);
+    login_builder.burst_size(10);
+    let login_governor_cfg = Arc::new(
+        login_builder
+            .key_extractor(PeerIpKeyExtractor)
+            .finish()
+            .context("invalid login rate limit configuration")?,
+    );
+    let login_rate_limit = GovernorLayer::new(login_governor_cfg);
+
+    // Build dashboard state
+    let dashboard_password_hash = cfg
+        .vendor
+        .as_ref()
+        .and_then(|v| v.dashboard_password_hash.clone());
+    let test_mode = false;
+    let verifying_key = signing_key.verifying_key();
+    let dashboard_state = DashboardState::new(
+        Arc::clone(&storage),
+        verifying_key,
+        test_mode,
+        dashboard_password_hash,
+    );
+
     // Assemble app router
     let health_state = HealthState {
         storage: Arc::clone(&storage),
@@ -296,14 +337,21 @@ where
     };
 
     let protocol_router = build_router(Arc::clone(&ctx)).layer(rate_limit);
+    let challenge_router =
+        build_dashboard_challenge_router(Arc::clone(&dashboard_state)).layer(challenge_rate_limit);
+    let login_verify_router =
+        build_dashboard_login_verify_router(Arc::clone(&dashboard_state)).layer(login_rate_limit);
+    let dashboard_router = build_dashboard_router(dashboard_state);
 
     let app = Router::new()
         .route("/health", get(health_handler::<S>))
         .with_state(health_state)
         .route("/products/{id}/info", get(product_info_handler::<S>))
         .with_state(product_info_state)
-        .route("/dashboard", get(dashboard_handler))
-        .merge(protocol_router);
+        .merge(protocol_router)
+        .merge(challenge_router)
+        .merge(login_verify_router)
+        .merge(dashboard_router);
 
     // Bind address
     let host = cfg
@@ -355,19 +403,6 @@ where
     }
 
     Ok(())
-}
-
-async fn dashboard_handler() -> impl axum::response::IntoResponse {
-    (
-        axum::http::StatusCode::OK,
-        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
-        concat!(
-            "<!DOCTYPE html><html><head><title>ZAL Licenser</title></head>",
-            "<body><h1>ZAL Licenser Server</h1>",
-            "<p>The vendor dashboard will be available in a future release.</p>",
-            "</body></html>"
-        ),
-    )
 }
 
 async fn shutdown_signal() {
@@ -739,6 +774,10 @@ async fn send_test_email(
     Ok(())
 }
 
+pub(crate) fn set_dashboard_password_hash(config_path: &Path, hash: &str) -> anyhow::Result<()> {
+    update_toml(config_path, "vendor", "dashboard_password_hash", hash)
+}
+
 // configure-dashboard-password
 pub async fn configure_dashboard_password(config_path: &Path) -> anyhow::Result<()> {
     let password =
@@ -749,7 +788,7 @@ pub async fn configure_dashboard_password(config_path: &Path) -> anyhow::Result<
 
     let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST).context("hashing password")?;
 
-    update_toml(config_path, "vendor", "dashboard_password_hash", &hash)?;
+    set_dashboard_password_hash(config_path, &hash)?;
     println!("Dashboard password configured.");
     Ok(())
 }
@@ -841,9 +880,8 @@ pub async fn sign_challenge(nonce: &str, cfg: &AppConfig) -> anyhow::Result<()> 
     use ed25519_dalek::Signer as _;
 
     let (signing_key, _) = load_signing_key(cfg)?;
-    let nonce_bytes = B64.decode(nonce).context("nonce must be valid base64")?;
-    let signature = signing_key.sign(&nonce_bytes);
-    println!("{}", B64.encode(signature.to_bytes()));
+    let signature = signing_key.sign(nonce.as_bytes());
+    println!("{}", B64_URL.encode(signature.to_bytes()));
     Ok(())
 }
 

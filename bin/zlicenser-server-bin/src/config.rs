@@ -21,8 +21,6 @@ pub struct DatabaseSection {
 #[derive(Debug, Deserialize, Default)]
 pub struct VendorSection {
     pub private_key_path: Option<PathBuf>,
-    // Stored by configure-dashboard-password; validated by future dashboard auth middleware
-    #[allow(dead_code)]
     pub dashboard_password_hash: Option<String>,
 }
 

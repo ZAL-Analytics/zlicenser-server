@@ -381,6 +381,7 @@ async fn emit_seq_gap_event<S: Storage>(
             response_type: "Log".into(),
             case_id: None,
             reviewed_at: None,
+            false_positive_at: None,
         })
         .await
 }

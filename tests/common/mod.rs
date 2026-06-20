@@ -742,6 +742,7 @@ pub async fn test_security_event(s: &dyn Storage, f: &Fixture) {
         payload: "{}".to_string(),
         response_type: "Warn".to_string(),
         reviewed_at: None,
+        false_positive_at: None,
         case_id: None,
     };
     s.create_security_event(&ev).await.unwrap();
@@ -880,6 +881,7 @@ pub async fn test_enrollment_session_optimistic_conflict(s: &dyn Storage, f: &Fi
     assert_eq!(got.state, EnrollmentState::OfferPending);
 }
 
+pub mod dashboard;
 pub mod http;
 pub mod issuance;
 

@@ -103,6 +103,16 @@ pub enum Error {
     // upgrade policy
     #[error("version string '{0}' is not a valid semver version or wildcard pattern")]
     InvalidVersionPattern(String),
+
+    // dashboard API
+    #[error("unauthorized")]
+    Unauthorized,
+    #[error("dashboard authentication failed")]
+    DashboardAuthFailed,
+    #[error("no dashboard password configured; run `configure-dashboard-password` to set one")]
+    DashboardPasswordNotConfigured,
+    #[error("cannot delete product: a license has already been issued")]
+    LicenseHasBeenIssued,
 }
 
 #[cfg(feature = "storage-sqlite")]
