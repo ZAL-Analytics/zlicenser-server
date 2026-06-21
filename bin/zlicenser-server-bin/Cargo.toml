@@ -10,7 +10,7 @@ name = "zlicenser-server"
 path = "src/main.rs"
 
 [dependencies]
-zlicenser-server = { path = "../../", features = ["storage-sqlite", "storage-postgres", "http-server"] }
+zlicenser-server = { path = "../../", features = ["storage-sqlite", "storage-postgres", "http-server", "tsa-qtsa", "payment-stripe"] }
 anyhow = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

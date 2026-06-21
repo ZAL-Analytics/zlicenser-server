@@ -631,7 +631,7 @@ pub struct PaymentTransaction {
     pub amount: i64,
     pub currency: String,
     pub provider_tier: ProviderTier,
-    pub test_mode: bool,
+    pub payment_sandbox: bool,
     pub status: PaymentStatus,
     pub created_at: i64,
     pub confirmed_at: Option<i64>,

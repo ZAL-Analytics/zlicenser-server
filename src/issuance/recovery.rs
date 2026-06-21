@@ -70,7 +70,7 @@ async fn recover_issue<S: Storage>(
     let fallback = empty_receipt();
     let receipt_ref = receipt.as_ref().unwrap_or(&fallback);
 
-    let test_mode = ctx.payment.is_test_mode();
+    let payment_sandbox = ctx.payment.is_payment_sandbox();
     let payment_tier = match ctx.payment.tier() {
         crate::payment::PaymentTier::Verified => crate::storage::types::ProviderTier::Verified,
         crate::payment::PaymentTier::Pseudonymous => {
@@ -101,7 +101,7 @@ async fn recover_issue<S: Storage>(
         i64::from(grant.binding_cert.seat_index),
         grant.binding_cert.expiry_at_ns,
         session.id,
-        test_mode,
+        payment_sandbox,
         payment_tier,
         SIssue::generate(),
     )

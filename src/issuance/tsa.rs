@@ -5,6 +5,36 @@ pub trait TsaProvider: Send + Sync {
     async fn timestamp(&self, digest: &[u8; 32]) -> crate::Result<Vec<u8>>;
 }
 
+#[cfg(feature = "tsa-qtsa")]
+pub struct QtsaTsaProvider {
+    client: reqwest::Client,
+    url: String,
+}
+
+#[cfg(feature = "tsa-qtsa")]
+impl QtsaTsaProvider {
+    pub fn new(url: String) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            url,
+        }
+    }
+}
+
+#[cfg(feature = "tsa-qtsa")]
+#[async_trait::async_trait]
+impl TsaProvider for QtsaTsaProvider {
+    async fn timestamp(&self, digest: &[u8; 32]) -> crate::Result<Vec<u8>> {
+        zlicenser_protocol::tsa::providers::qtsa::request_token_hashed_to(
+            &self.client,
+            digest,
+            &self.url,
+        )
+        .await
+        .map_err(|e| crate::Error::TsaFailed(e.to_string()))
+    }
+}
+
 pub(crate) async fn tsa_with_retry(
     tsa: &Arc<dyn TsaProvider>,
     digest: &[u8; 32],

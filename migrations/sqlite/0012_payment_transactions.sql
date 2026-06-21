@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
     amount                  INTEGER NOT NULL,
     currency                TEXT NOT NULL,
     provider_tier           TEXT NOT NULL,
-    test_mode               INTEGER NOT NULL CHECK (test_mode IN (0, 1)),
+    payment_sandbox         INTEGER NOT NULL CHECK (payment_sandbox IN (0, 1)),
     status                  TEXT NOT NULL,
     created_at              INTEGER NOT NULL,
     confirmed_at            INTEGER

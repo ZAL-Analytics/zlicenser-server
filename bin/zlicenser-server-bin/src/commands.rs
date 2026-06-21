@@ -39,7 +39,7 @@ use zlicenser_server::{
     storage::Storage,
 };
 
-use crate::config::{update_toml, update_toml_nested, AppConfig};
+use crate::config::{resolve_secret, update_toml, update_toml_nested, AppConfig};
 
 // Noop stubs for optional subsystems
 struct NoopTsaProvider;
@@ -59,7 +59,7 @@ impl PaymentProviderTrait for NoopPaymentProvider {
         PaymentTier::Anonymous
     }
 
-    fn is_test_mode(&self) -> bool {
+    fn is_payment_sandbox(&self) -> bool {
         false
     }
 
@@ -84,6 +84,51 @@ impl PaymentProviderTrait for NoopPaymentProvider {
 
     async fn cancel_intent(&self, _intent_id: &str) -> zlicenser_server::Result<()> {
         Err(zlicenser_server::Error::NoPaymentProvider)
+    }
+}
+
+// Provider builders
+fn build_tsa_provider(cfg: &AppConfig) -> anyhow::Result<Arc<dyn TsaProvider>> {
+    let Some(tsa_cfg) = cfg.tsa.as_ref() else {
+        return Ok(Arc::new(NoopTsaProvider));
+    };
+    match tsa_cfg.provider.as_deref().unwrap_or("noop") {
+        "qtsa" => {
+            let url = resolve_secret(tsa_cfg.url_env.as_deref(), tsa_cfg.url_file.as_deref())?
+                .context("[tsa].url_env or [tsa].url_file is required for provider = 'qtsa'")?;
+            Ok(Arc::new(
+                zlicenser_server::issuance::tsa::QtsaTsaProvider::new(url),
+            ))
+        }
+        "noop" | "" => Ok(Arc::new(NoopTsaProvider)),
+        other => anyhow::bail!("unknown [tsa].provider '{other}'; supported: qtsa"),
+    }
+}
+
+fn build_payment_provider(
+    cfg: &AppConfig,
+) -> anyhow::Result<(Arc<dyn PaymentProviderTrait>, Option<String>)> {
+    let Some(pay_cfg) = cfg.payment.as_ref() else {
+        return Ok((Arc::new(NoopPaymentProvider), None));
+    };
+    match pay_cfg.provider.as_deref().unwrap_or("noop") {
+        "stripe" => {
+            let secret_key = resolve_secret(
+                pay_cfg.secret_key_env.as_deref(),
+                pay_cfg.secret_key_file.as_deref(),
+            )?
+            .context(
+                "[payment].secret_key_env or [payment].secret_key_file is required for provider = 'stripe'",
+            )?;
+            let webhook_secret = resolve_secret(
+                pay_cfg.webhook_secret_env.as_deref(),
+                pay_cfg.webhook_secret_file.as_deref(),
+            )?;
+            let p = zlicenser_server::payment::stripe::StripePaymentProvider::new(&secret_key);
+            Ok((Arc::new(p), webhook_secret))
+        }
+        "noop" | "" => Ok((Arc::new(NoopPaymentProvider), None)),
+        other => anyhow::bail!("unknown [payment].provider '{other}'; supported: stripe"),
     }
 }
 
@@ -173,6 +218,20 @@ fn read_smtp_password_from(
     Ok(None)
 }
 
+fn resolve_postgres_url(cfg: &AppConfig) -> anyhow::Result<String> {
+    let db = cfg
+        .database
+        .as_ref()
+        .context("[database] section is required when backend = 'postgres'")?;
+    if let Some(url) = resolve_secret(db.url_env.as_deref(), db.url_file.as_deref())? {
+        return Ok(url);
+    }
+    db.url
+        .as_deref()
+        .map(str::to_string)
+        .context("[database].url, [database].url_env, or [database].url_file is required when backend = 'postgres'")
+}
+
 fn resolve_sqlite_path(cfg: &AppConfig) -> anyhow::Result<String> {
     let path = cfg
         .database
@@ -221,12 +280,8 @@ pub async fn serve(cfg: AppConfig) -> anyhow::Result<()> {
         }
         "postgres" => {
             use zlicenser_server::storage::postgres::PostgresStorage;
-            let url = cfg
-                .database
-                .as_ref()
-                .and_then(|d| d.url.as_deref())
-                .context("[database].url is required when backend = 'postgres'")?;
-            let storage = PostgresStorage::new(url)
+            let url = resolve_postgres_url(&cfg)?;
+            let storage = PostgresStorage::new(&url)
                 .await
                 .context("connecting to PostgreSQL database")?;
             serve_with_storage(Arc::new(storage), &cfg).await
@@ -242,9 +297,13 @@ where
     let (signing_key, _key_path) = load_signing_key(cfg)?;
     let at_rest_key = derive_at_rest_key(&signing_key);
 
+    let tsa = build_tsa_provider(cfg)?;
+    let (payment, webhook_secret) = build_payment_provider(cfg)?;
+    let payment_sandbox = payment.is_payment_sandbox();
+
     let server_cfg = Arc::new(ServerConfig {
         offer_ttl_ns: None,
-        stripe_webhook_secret: None,
+        stripe_webhook_secret: webhook_secret,
         api_bearer_token: None,
     });
 
@@ -259,8 +318,8 @@ where
 
     let ctx = Arc::new(HandlerContext {
         storage: Arc::clone(&storage),
-        payment: Arc::new(NoopPaymentProvider),
-        tsa: Arc::new(NoopTsaProvider),
+        payment,
+        tsa,
         signing_key: Arc::new(signing_key.clone()),
         at_rest_key: Arc::new(at_rest_key),
         config: server_cfg,
@@ -290,7 +349,7 @@ where
     );
     let rate_limit = GovernorLayer::new(governor_cfg);
 
-    // Dashboard rate limiting: challenge → 60/min (1/sec, burst 60), login+verify → 10/15min (1/90sec, burst 10)
+    // Dashboard rate limiting: challenge --> 60/min (1/sec, burst 60), login+verify --> 10/15min (1/90sec, burst 10)
     let mut challenge_builder = GovernorConfigBuilder::default();
     challenge_builder.per_second(1);
     challenge_builder.burst_size(60);
@@ -318,12 +377,11 @@ where
         .vendor
         .as_ref()
         .and_then(|v| v.dashboard_password_hash.clone());
-    let test_mode = false;
     let verifying_key = signing_key.verifying_key();
     let dashboard_state = DashboardState::new(
         Arc::clone(&storage),
         verifying_key,
-        test_mode,
+        payment_sandbox,
         dashboard_password_hash,
     );
 
@@ -331,6 +389,7 @@ where
     let health_state = HealthState {
         storage: Arc::clone(&storage),
         version: env!("CARGO_PKG_VERSION"),
+        payment_sandbox,
     };
     let product_info_state = ProductInfoState {
         storage: Arc::clone(&storage),
@@ -351,7 +410,8 @@ where
         .merge(protocol_router)
         .merge(challenge_router)
         .merge(login_verify_router)
-        .merge(dashboard_router);
+        .merge(dashboard_router)
+        .layer(axum::middleware::from_fn(append_json_newline));
 
     // Bind address
     let host = cfg
@@ -382,16 +442,32 @@ where
             let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(cert, key)
                 .await
                 .context("loading TLS certificate and key")?;
+            // Bind before logging so the "listening" message is only printed when the
+            // socket is actually acquired. This prevents the misleading "listening" line
+            // followed immediately by an "Address already in use" error.
+            let listener = std::net::TcpListener::bind(addr)
+                .with_context(|| format!("failed to bind to {addr}"))?;
+            // Tokio requires non-blocking sockets.
+            listener
+                .set_nonblocking(true)
+                .context("failed to set listener non-blocking")?;
             tracing::info!(%addr, "listening with TLS");
-            axum_server::bind_rustls(addr, tls_config)
+            axum_server::from_tcp_rustls(listener, tls_config)
+                .context("creating TLS server from TCP listener")?
                 .handle(handle)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .await
                 .context("TLS server error")?;
         }
         (None, None) => {
+            let listener = std::net::TcpListener::bind(addr)
+                .with_context(|| format!("failed to bind to {addr}"))?;
+            listener
+                .set_nonblocking(true)
+                .context("failed to set listener non-blocking")?;
             tracing::info!(%addr, "listening");
-            axum_server::bind(addr)
+            axum_server::from_tcp(listener)
+                .context("creating server from TCP listener")?
                 .handle(handle)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>())
                 .await
@@ -403,6 +479,31 @@ where
     }
 
     Ok(())
+}
+
+async fn append_json_newline(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let response = next.run(request).await;
+    let is_json = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|s| s.starts_with("application/json"));
+    if !is_json {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {
+        return axum::response::Response::from_parts(parts, axum::body::Body::empty());
+    };
+    if bytes.last() == Some(&b'\n') {
+        return axum::response::Response::from_parts(parts, axum::body::Body::from(bytes));
+    }
+    let mut newlined = bytes.to_vec();
+    newlined.push(b'\n');
+    axum::response::Response::from_parts(parts, axum::body::Body::from(newlined))
 }
 
 async fn shutdown_signal() {
@@ -613,6 +714,110 @@ pub async fn rotate_key(new_key_path: &Path, config_path: &Path) -> anyhow::Resu
     Ok(())
 }
 
+// configure-database
+pub async fn configure_database(config_path: &Path) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    println!("Select database backend:");
+    println!("  1. SQLite (default, file-based, no server required)");
+    println!("  2. PostgreSQL");
+    print!("Choice [1]: ");
+    std::io::stdout().flush()?;
+    let mut choice = String::new();
+    std::io::stdin().read_line(&mut choice)?;
+    let choice = choice.trim();
+
+    match choice {
+        "" | "1" => {
+            let default_path = dirs::data_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("zlicenser-server/data.db");
+            print!("Database file path [{}]: ", default_path.display());
+            std::io::stdout().flush()?;
+            let mut path_input = String::new();
+            std::io::stdin().read_line(&mut path_input)?;
+            let db_path = if path_input.trim().is_empty() {
+                default_path
+            } else {
+                PathBuf::from(path_input.trim())
+            };
+
+            update_toml(config_path, "database", "backend", "sqlite")?;
+            update_toml(config_path, "database", "path", &*db_path.to_string_lossy())?;
+            println!(
+                "Database configuration saved: SQLite at {}",
+                db_path.display()
+            );
+        }
+        "2" => {
+            let mut host = String::new();
+            print!("Host [localhost]: ");
+            std::io::stdout().flush()?;
+            std::io::stdin().read_line(&mut host)?;
+            let host = if host.trim().is_empty() {
+                "localhost".to_string()
+            } else {
+                host.trim().to_string()
+            };
+
+            let mut port_input = String::new();
+            print!("Port [5432]: ");
+            std::io::stdout().flush()?;
+            std::io::stdin().read_line(&mut port_input)?;
+            let port: u16 = if port_input.trim().is_empty() {
+                5432
+            } else {
+                port_input.trim().parse().context("invalid port number")?
+            };
+
+            let mut username = String::new();
+            print!("Username [postgres]: ");
+            std::io::stdout().flush()?;
+            std::io::stdin().read_line(&mut username)?;
+            let username = if username.trim().is_empty() {
+                "postgres".to_string()
+            } else {
+                username.trim().to_string()
+            };
+
+            let password =
+                rpassword::prompt_password("Password (input hidden, leave blank for none): ")
+                    .context("reading PostgreSQL password")?;
+            let password = password.trim().to_string();
+
+            let mut dbname = String::new();
+            print!("Database name [zlicenser]: ");
+            std::io::stdout().flush()?;
+            std::io::stdin().read_line(&mut dbname)?;
+            let dbname = if dbname.trim().is_empty() {
+                "zlicenser".to_string()
+            } else {
+                dbname.trim().to_string()
+            };
+
+            let url = if password.is_empty() {
+                format!("postgres://{username}@{host}:{port}/{dbname}")
+            } else {
+                format!("postgres://{username}:{password}@{host}:{port}/{dbname}")
+            };
+
+            update_toml(config_path, "database", "backend", "postgres")?;
+            prompt_secret_storage(
+                "PostgreSQL URL",
+                &url,
+                config_path,
+                "zlicenser-server/postgres.url",
+                "database",
+                "url",
+            )?;
+            println!("Database configuration saved to {}", config_path.display());
+        }
+        _ => anyhow::bail!("invalid choice; enter 1 or 2"),
+    }
+
+    Ok(())
+}
+
 // configure-email
 pub async fn configure_email(config_path: &Path) -> anyhow::Result<()> {
     use std::io::Write as _;
@@ -814,12 +1019,8 @@ pub async fn db_migrate(cfg: &AppConfig) -> anyhow::Result<()> {
         }
         "postgres" => {
             use zlicenser_server::storage::postgres::PostgresStorage;
-            let url = cfg
-                .database
-                .as_ref()
-                .and_then(|d| d.url.as_deref())
-                .context("[database].url is required when backend = 'postgres'")?;
-            PostgresStorage::new(url)
+            let url = resolve_postgres_url(cfg)?;
+            PostgresStorage::new(&url)
                 .await
                 .context("running PostgreSQL migrations")?;
             println!("PostgreSQL migrations applied.");
@@ -849,12 +1050,8 @@ pub async fn audit_verify(cfg: &AppConfig) -> anyhow::Result<()> {
         }
         "postgres" => {
             use zlicenser_server::storage::postgres::PostgresStorage;
-            let url = cfg
-                .database
-                .as_ref()
-                .and_then(|d| d.url.as_deref())
-                .context("[database].url is required when backend = 'postgres'")?;
-            let storage = PostgresStorage::new(url)
+            let url = resolve_postgres_url(cfg)?;
+            let storage = PostgresStorage::new(&url)
                 .await
                 .context("opening PostgreSQL database")?;
             run_audit_verify(Arc::new(storage)).await
@@ -872,6 +1069,182 @@ async fn run_audit_verify<S: Storage + Send + Sync + 'static>(
         .context("database connectivity check failed")?;
 
     println!("Audit verify complete. No integrity issues found.");
+    Ok(())
+}
+
+// configure-tsa
+pub async fn configure_tsa(config_path: &Path) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    println!("Select TSA provider:");
+    println!("  1. QTSA (eIDAS-qualified, statutory legal weight)");
+    println!("  (additional providers in future releases)");
+    print!("Choice [1]: ");
+    std::io::stdout().flush()?;
+    let mut choice = String::new();
+    std::io::stdin().read_line(&mut choice)?;
+    let choice = choice.trim();
+    anyhow::ensure!(
+        choice.is_empty() || choice == "1",
+        "invalid choice; only '1' (QTSA) is supported"
+    );
+
+    let url = rpassword::prompt_password(
+        "QTSA endpoint URL (credentials embedded in URL, input hidden): ",
+    )
+    .context("reading QTSA URL")?;
+    let url = url.trim().to_string();
+    anyhow::ensure!(!url.is_empty(), "QTSA URL is required");
+    anyhow::ensure!(
+        url.starts_with("https://"),
+        "QTSA URL must start with https://"
+    );
+
+    update_toml(config_path, "tsa", "provider", "qtsa")?;
+    prompt_secret_storage(
+        "QTSA URL",
+        &url,
+        config_path,
+        "zlicenser-server/qtsa.url",
+        "tsa",
+        "url",
+    )?;
+
+    println!("TSA configuration saved to {}", config_path.display());
+    Ok(())
+}
+
+// configure-payment
+pub async fn configure_payment(config_path: &Path) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    println!("Select payment provider:");
+    println!("  1. Stripe");
+    println!("  (additional providers in future releases)");
+    print!("Choice [1]: ");
+    std::io::stdout().flush()?;
+    let mut choice = String::new();
+    std::io::stdin().read_line(&mut choice)?;
+    let choice = choice.trim();
+    anyhow::ensure!(
+        choice.is_empty() || choice == "1",
+        "invalid choice; only '1' (Stripe) is supported"
+    );
+
+    let secret_key = rpassword::prompt_password("Stripe secret key (sk_live_... or sk_test_...): ")
+        .context("reading Stripe secret key")?;
+    let secret_key = secret_key.trim().to_string();
+    anyhow::ensure!(!secret_key.is_empty(), "Stripe secret key is required");
+    anyhow::ensure!(
+        secret_key.starts_with("sk_"),
+        "Stripe secret key must start with 'sk_'"
+    );
+
+    let webhook_secret = rpassword::prompt_password(
+        "Stripe webhook signing secret (whsec_..., leave blank to skip): ",
+    )
+    .context("reading Stripe webhook secret")?;
+    let webhook_secret = webhook_secret.trim().to_string();
+
+    update_toml(config_path, "payment", "provider", "stripe")?;
+    prompt_secret_storage(
+        "Stripe secret key",
+        &secret_key,
+        config_path,
+        "zlicenser-server/stripe.secret_key",
+        "payment",
+        "secret_key",
+    )?;
+
+    if !webhook_secret.is_empty() {
+        prompt_secret_storage(
+            "Stripe webhook secret",
+            &webhook_secret,
+            config_path,
+            "zlicenser-server/stripe.webhook_secret",
+            "payment",
+            "webhook_secret",
+        )?;
+    }
+
+    println!("Payment configuration saved to {}", config_path.display());
+    Ok(())
+}
+
+fn prompt_secret_storage(
+    label: &str,
+    secret: &str,
+    config_path: &Path,
+    default_filename: &str,
+    section: &str,
+    key: &str,
+) -> anyhow::Result<()> {
+    use std::io::Write as _;
+
+    println!("Store {label} as:");
+    println!("  1. File (0600) — recommended");
+    println!("  2. Environment variable name");
+    print!("Choice [1]: ");
+    std::io::stdout().flush()?;
+    let mut choice = String::new();
+    std::io::stdin().read_line(&mut choice)?;
+    let choice = choice.trim();
+
+    if choice.is_empty() || choice == "1" {
+        let default_path = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(default_filename);
+        print!("File path [{}]: ", default_path.display());
+        std::io::stdout().flush()?;
+        let mut path_input = String::new();
+        std::io::stdin().read_line(&mut path_input)?;
+        let file_path = if path_input.trim().is_empty() {
+            default_path
+        } else {
+            PathBuf::from(path_input.trim())
+        };
+
+        if let Some(parent) = file_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("creating directory {}", parent.display()))?;
+            }
+        }
+        std::fs::write(&file_path, secret)
+            .with_context(|| format!("writing secret file {}", file_path.display()))?;
+        std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("setting permissions on {}", file_path.display()))?;
+
+        update_toml(
+            config_path,
+            section,
+            &format!("{key}_file"),
+            &*file_path.to_string_lossy(),
+        )?;
+        println!("Secret written to {} (0600)", file_path.display());
+    } else if choice == "2" {
+        print!("Environment variable name: ");
+        std::io::stdout().flush()?;
+        let mut env_name = String::new();
+        std::io::stdin().read_line(&mut env_name)?;
+        let env_name = env_name.trim().to_string();
+        anyhow::ensure!(
+            !env_name.is_empty(),
+            "environment variable name is required"
+        );
+
+        update_toml(
+            config_path,
+            section,
+            &format!("{key}_env"),
+            env_name.as_str(),
+        )?;
+        println!("Config updated: [{section}].{key}_env = \"{env_name}\"");
+        println!("Make sure to set that environment variable before starting the server.");
+    } else {
+        anyhow::bail!("invalid choice; enter 1 or 2");
+    }
+
     Ok(())
 }
 

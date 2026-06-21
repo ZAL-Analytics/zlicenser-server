@@ -553,6 +553,7 @@ pub mod with_storage {
             .with_state(HealthState {
                 storage,
                 version: "test-0.0.0",
+                payment_sandbox: false,
             })
     }
 
@@ -584,7 +585,7 @@ pub mod with_storage {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body["status"], "ok");
         assert_eq!(body["database"], "ok");
-        assert_eq!(body["test_mode"], false);
+        assert_eq!(body["payment_sandbox"], false);
         assert!(!body["version"].is_null());
     }
 
@@ -608,7 +609,7 @@ pub mod with_storage {
             .await
             .unwrap();
         let req = Request::builder()
-            .uri(&format!("/products/{pid}/info"))
+            .uri(format!("/products/{pid}/info"))
             .body(Body::empty())
             .unwrap();
         let (status, body) = call(product_router(Arc::clone(&s)), req).await;
@@ -626,7 +627,7 @@ pub mod with_storage {
         p.active = false;
         s.create_product(&p).await.unwrap();
         let req = Request::builder()
-            .uri(&format!("/products/{pid}/info"))
+            .uri(format!("/products/{pid}/info"))
             .body(Body::empty())
             .unwrap();
         let (status, _) = call(product_router(Arc::clone(&s)), req).await;
@@ -638,7 +639,7 @@ pub mod with_storage {
     ) {
         let pid = Uuid::new_v4();
         let req = Request::builder()
-            .uri(&format!("/products/{pid}/info"))
+            .uri(format!("/products/{pid}/info"))
             .body(Body::empty())
             .unwrap();
         let (status, _) = call(product_router(s), req).await;
@@ -658,7 +659,7 @@ pub mod with_storage {
             .await
             .unwrap();
         let req = Request::builder()
-            .uri(&format!("/products/{pid}/info"))
+            .uri(format!("/products/{pid}/info"))
             .body(Body::empty())
             .unwrap();
         let (status, body) = call(product_router(Arc::clone(&s)), req).await;
@@ -678,7 +679,7 @@ pub mod with_storage {
             .await
             .unwrap();
         let req = Request::builder()
-            .uri(&format!("/products/{pid}/info"))
+            .uri(format!("/products/{pid}/info"))
             .body(Body::empty())
             .unwrap();
         let (status, body) = call(product_router(Arc::clone(&s)), req).await;

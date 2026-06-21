@@ -67,7 +67,7 @@ pub async fn list_audit_log_handler<S: Storage + Clone + Send + Sync + 'static>(
                 "total": paged.total,
                 "page": paged.page,
                 "page_size": paged.page_size,
-                "test_mode": state.test_mode,
+                "payment_sandbox": state.payment_sandbox,
             }))
             .into_response()
         }

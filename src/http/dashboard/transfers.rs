@@ -15,7 +15,7 @@ use super::state::DashboardState;
 use super::util::{append_audit, format_ns_as_rfc3339, new_audit_entry, now_ns};
 use crate::storage::{AuditAction, AuditTargetType, Storage, TransferRequest, TransferStatus};
 
-fn transfer_to_json(r: &TransferRequest, test_mode: bool) -> Value {
+fn transfer_to_json(r: &TransferRequest, payment_sandbox: bool) -> Value {
     json!({
         "id": r.id,
         "license_id": r.license_id,
@@ -25,7 +25,7 @@ fn transfer_to_json(r: &TransferRequest, test_mode: bool) -> Value {
         "status": r.status.to_string(),
         "vendor_note": r.vendor_note,
         "resolved_at": r.resolved_at.map(format_ns_as_rfc3339),
-        "test_mode": test_mode,
+        "payment_sandbox": payment_sandbox,
     })
 }
 
@@ -53,9 +53,9 @@ pub async fn list_transfers_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(requests) => {
             let items: Vec<Value> = requests
                 .iter()
-                .map(|r| transfer_to_json(r, state.test_mode))
+                .map(|r| transfer_to_json(r, state.payment_sandbox))
                 .collect();
-            Json(json!({"items": items, "test_mode": state.test_mode})).into_response()
+            Json(json!({"items": items, "payment_sandbox": state.payment_sandbox})).into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -89,7 +89,7 @@ pub async fn approve_transfer_handler<S: Storage + Clone + Send + Sync + 'static
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"not_found","test_mode":state.test_mode})),
+                Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -105,7 +105,7 @@ pub async fn approve_transfer_handler<S: Storage + Clone + Send + Sync + 'static
     if request.status != TransferStatus::Pending {
         return (
             StatusCode::CONFLICT,
-            Json(json!({"error":"already_resolved","status":request.status.to_string(),"test_mode":state.test_mode})),
+            Json(json!({"error":"already_resolved","status":request.status.to_string(),"payment_sandbox":state.payment_sandbox})),
         ).into_response();
     }
 
@@ -150,7 +150,7 @@ pub async fn approve_transfer_handler<S: Storage + Clone + Send + Sync + 'static
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }
 
 pub async fn reject_transfer_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -172,7 +172,7 @@ pub async fn reject_transfer_handler<S: Storage + Clone + Send + Sync + 'static>
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"not_found","test_mode":state.test_mode})),
+                Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -188,7 +188,7 @@ pub async fn reject_transfer_handler<S: Storage + Clone + Send + Sync + 'static>
     if request.status != TransferStatus::Pending {
         return (
             StatusCode::CONFLICT,
-            Json(json!({"error":"already_resolved","status":request.status.to_string(),"test_mode":state.test_mode})),
+            Json(json!({"error":"already_resolved","status":request.status.to_string(),"payment_sandbox":state.payment_sandbox})),
         ).into_response();
     }
 
@@ -233,5 +233,5 @@ pub async fn reject_transfer_handler<S: Storage + Clone + Send + Sync + 'static>
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }

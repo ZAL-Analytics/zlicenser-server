@@ -18,7 +18,7 @@ use crate::storage::{
     RevocationSource, Storage,
 };
 
-fn license_to_json(l: &License, test_mode: bool) -> Value {
+fn license_to_json(l: &License, payment_sandbox: bool) -> Value {
     json!({
         "id": l.id,
         "customer_id": l.customer_id,
@@ -33,7 +33,7 @@ fn license_to_json(l: &License, test_mode: bool) -> Value {
         "revocation_reason": l.revocation_reason,
         "created_at": format_ns_as_rfc3339(l.created_at),
         "email_sent_at": l.email_sent_at.map(format_ns_as_rfc3339),
-        "test_mode": test_mode,
+        "payment_sandbox": payment_sandbox,
     })
 }
 
@@ -69,14 +69,14 @@ pub async fn list_licenses_handler<S: Storage + Clone + Send + Sync + 'static>(
             let items: Vec<Value> = paged
                 .items
                 .iter()
-                .map(|l| license_to_json(l, state.test_mode))
+                .map(|l| license_to_json(l, state.payment_sandbox))
                 .collect();
             Json(json!({
                 "items": items,
                 "total": paged.total,
                 "page": paged.page,
                 "page_size": paged.page_size,
-                "test_mode": state.test_mode,
+                "payment_sandbox": state.payment_sandbox,
             }))
             .into_response()
         }
@@ -101,10 +101,10 @@ pub async fn get_license_handler<S: Storage + Clone + Send + Sync + 'static>(
             .into_response();
     }
     match state.storage.get_license(id).await {
-        Ok(Some(l)) => Json(license_to_json(&l, state.test_mode)).into_response(),
+        Ok(Some(l)) => Json(license_to_json(&l, state.payment_sandbox)).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response(),
         Err(e) => (
@@ -139,7 +139,7 @@ pub async fn revoke_license_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"not_found","test_mode":state.test_mode})),
+                Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -155,7 +155,7 @@ pub async fn revoke_license_handler<S: Storage + Clone + Send + Sync + 'static>(
     if license.status != LicenseStatus::Active {
         return (
             StatusCode::CONFLICT,
-            Json(json!({"error":"license_not_active","status":license.status.to_string(),"test_mode":state.test_mode})),
+            Json(json!({"error":"license_not_active","status":license.status.to_string(),"payment_sandbox":state.payment_sandbox})),
         ).into_response();
     }
 
@@ -198,7 +198,7 @@ pub async fn revoke_license_handler<S: Storage + Clone + Send + Sync + 'static>(
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }
 
 #[derive(Deserialize)]
@@ -230,7 +230,7 @@ pub async fn revoke_all_customer_licenses_handler<S: Storage + Clone + Send + Sy
     {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -287,7 +287,8 @@ pub async fn revoke_all_customer_licenses_handler<S: Storage + Clone + Send + Sy
     )
     .await;
 
-    Json(json!({"ok":true,"revoked":revoked,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"revoked":revoked,"payment_sandbox":state.payment_sandbox}))
+        .into_response()
 }
 
 pub async fn client_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -313,7 +314,8 @@ pub async fn client_versions_handler<S: Storage + Clone + Send + Sync + 'static>
                 .iter()
                 .map(|(version, count)| json!({"version": version, "active_licenses": count}))
                 .collect();
-            Json(json!({"versions": versions, "test_mode": state.test_mode})).into_response()
+            Json(json!({"versions": versions, "payment_sandbox": state.payment_sandbox}))
+                .into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -340,7 +342,7 @@ pub async fn evidence_bundle_stub_handler<S: Storage + Clone + Send + Sync + 'st
         Json(json!({
             "error": "not_implemented",
             "message": "Evidence bundle export is not yet implemented",
-            "test_mode": state.test_mode,
+            "payment_sandbox": state.payment_sandbox,
         })),
     )
         .into_response()

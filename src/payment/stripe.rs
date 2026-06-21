@@ -12,16 +12,16 @@ const STRIPE_API_BASE: &str = "https://api.stripe.com/v1";
 pub struct StripePaymentProvider {
     client: HttpClient,
     secret_key: String,
-    test_mode: bool,
+    payment_sandbox: bool,
 }
 
 impl StripePaymentProvider {
     pub fn new(secret_key: &str) -> Self {
-        let test_mode = secret_key.starts_with("sk_test_");
+        let payment_sandbox = secret_key.starts_with("sk_test_");
         Self {
             client: HttpClient::new(),
             secret_key: secret_key.to_owned(),
-            test_mode,
+            payment_sandbox,
         }
     }
 
@@ -73,8 +73,8 @@ impl PaymentProvider for StripePaymentProvider {
         PaymentTier::Verified
     }
 
-    fn is_test_mode(&self) -> bool {
-        self.test_mode
+    fn is_payment_sandbox(&self) -> bool {
+        self.payment_sandbox
     }
 
     async fn create_intent(

@@ -34,7 +34,7 @@ impl PaymentProvider for OkPayment {
     fn tier(&self) -> PaymentTier {
         PaymentTier::Verified
     }
-    fn is_test_mode(&self) -> bool {
+    fn is_payment_sandbox(&self) -> bool {
         false
     }
     async fn create_intent(
@@ -68,7 +68,7 @@ impl PaymentProvider for FailedPayment {
     fn tier(&self) -> PaymentTier {
         PaymentTier::Verified
     }
-    fn is_test_mode(&self) -> bool {
+    fn is_payment_sandbox(&self) -> bool {
         false
     }
     async fn create_intent(

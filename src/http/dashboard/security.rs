@@ -18,7 +18,7 @@ use crate::storage::{
     QuarantineTrigger, SecurityEventFilter, SecurityEventRecord, SessionStatus, Storage,
 };
 
-fn event_to_json(e: &SecurityEventRecord, test_mode: bool) -> Value {
+fn event_to_json(e: &SecurityEventRecord, payment_sandbox: bool) -> Value {
     json!({
         "id": e.id,
         "event_id": e.event_id,
@@ -34,7 +34,7 @@ fn event_to_json(e: &SecurityEventRecord, test_mode: bool) -> Value {
         "case_id": e.case_id,
         "reviewed_at": e.reviewed_at.map(format_ns_as_rfc3339),
         "false_positive_at": e.false_positive_at.map(format_ns_as_rfc3339),
-        "test_mode": test_mode,
+        "payment_sandbox": payment_sandbox,
     })
 }
 
@@ -69,14 +69,14 @@ pub async fn list_security_events_handler<S: Storage + Clone + Send + Sync + 'st
             let items: Vec<Value> = paged
                 .items
                 .iter()
-                .map(|e| event_to_json(e, state.test_mode))
+                .map(|e| event_to_json(e, state.payment_sandbox))
                 .collect();
             Json(json!({
                 "items": items,
                 "total": paged.total,
                 "page": paged.page,
                 "page_size": paged.page_size,
-                "test_mode": state.test_mode,
+                "payment_sandbox": state.payment_sandbox,
             }))
             .into_response()
         }
@@ -122,7 +122,7 @@ pub async fn review_security_event_handler<S: Storage + Clone + Send + Sync + 's
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }
 
 pub async fn false_positive_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -163,7 +163,7 @@ pub async fn false_positive_handler<S: Storage + Clone + Send + Sync + 'static>(
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }
 
 #[derive(Deserialize)]
@@ -195,7 +195,7 @@ pub async fn quarantine_binding_handler<S: Storage + Clone + Send + Sync + 'stat
     {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -209,7 +209,7 @@ pub async fn quarantine_binding_handler<S: Storage + Clone + Send + Sync + 'stat
         Ok(None) => {
             return (
                 StatusCode::CONFLICT,
-                Json(json!({"error":"no_active_session","test_mode":state.test_mode})),
+                Json(json!({"error":"no_active_session","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -266,7 +266,8 @@ pub async fn quarantine_binding_handler<S: Storage + Clone + Send + Sync + 'stat
     )
     .await;
 
-    Json(json!({"ok":true,"case_id":case.case_id,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"case_id":case.case_id,"payment_sandbox":state.payment_sandbox}))
+        .into_response()
 }
 
 pub async fn terminate_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -292,7 +293,7 @@ pub async fn terminate_binding_handler<S: Storage + Clone + Send + Sync + 'stati
     {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -306,7 +307,7 @@ pub async fn terminate_binding_handler<S: Storage + Clone + Send + Sync + 'stati
         Ok(None) => {
             return (
                 StatusCode::CONFLICT,
-                Json(json!({"error":"no_active_session","test_mode":state.test_mode})),
+                Json(json!({"error":"no_active_session","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -349,7 +350,7 @@ pub async fn terminate_binding_handler<S: Storage + Clone + Send + Sync + 'stati
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }
 
 pub async fn resume_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -375,7 +376,7 @@ pub async fn resume_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
     {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -389,7 +390,9 @@ pub async fn resume_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(None) => {
             return (
                 StatusCode::CONFLICT,
-                Json(json!({"error":"no_active_quarantine","test_mode":state.test_mode})),
+                Json(
+                    json!({"error":"no_active_quarantine","payment_sandbox":state.payment_sandbox}),
+                ),
             )
                 .into_response();
         }
@@ -437,5 +440,5 @@ pub async fn resume_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }

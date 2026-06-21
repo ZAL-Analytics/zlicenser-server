@@ -9,6 +9,7 @@ use crate::storage::Storage;
 pub struct HealthState<S: Storage + Clone> {
     pub storage: Arc<S>,
     pub version: &'static str,
+    pub payment_sandbox: bool,
 }
 
 pub async fn health_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -26,7 +27,7 @@ pub async fn health_handler<S: Storage + Clone + Send + Sync + 'static>(
             "status": status_str,
             "version": state.version,
             "database": db_str,
-            "test_mode": false,
+            "payment_sandbox": state.payment_sandbox,
         })),
     )
 }

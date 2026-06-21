@@ -34,13 +34,13 @@ pub async fn get_vendor_handler<S: Storage + Clone + Send + Sync + 'static>(
                 "registered_at": format_ns_as_rfc3339(config.registered_at),
                 "rotated_from_key": config.rotated_from_key.as_deref().map(hex::encode),
                 "rotated_at": config.rotated_at.map(format_ns_as_rfc3339),
-                "test_mode": state.test_mode,
+                "payment_sandbox": state.payment_sandbox,
             }))
             .into_response()
         }
         Ok(None) => (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_configured","test_mode":state.test_mode})),
+            Json(json!({"error":"not_configured","payment_sandbox":state.payment_sandbox})),
         )
             .into_response(),
         Err(e) => (

@@ -411,7 +411,7 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
         )
         .await?;
 
-    let test_mode = ctx.payment.is_test_mode();
+    let payment_sandbox = ctx.payment.is_payment_sandbox();
     let payment_tier = match ctx.payment.tier() {
         crate::payment::PaymentTier::Verified => ProviderTier::Verified,
         crate::payment::PaymentTier::Pseudonymous => ProviderTier::Pseudonymous,
@@ -453,7 +453,7 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
         seat_index,
         expiry_at_ns,
         session_id,
-        test_mode,
+        payment_sandbox,
         payment_tier,
         s_issue,
     )
@@ -486,7 +486,7 @@ pub(crate) async fn issue_all_records<S: Storage>(
     seat_index: i64,
     expiry_at_ns: Option<i64>,
     session_id: Uuid,
-    test_mode: bool,
+    payment_sandbox: bool,
     payment_tier: ProviderTier,
     s_issue: SIssue,
 ) -> crate::Result<()> {
@@ -549,7 +549,7 @@ pub(crate) async fn issue_all_records<S: Storage>(
             amount: product.pricing_amount,
             currency: product.pricing_currency.clone(),
             provider_tier: payment_tier,
-            test_mode,
+            payment_sandbox,
             status: PaymentStatus::Confirmed,
             created_at: now,
             confirmed_at: Some(confirmation.captured_at_ns),

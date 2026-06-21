@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS payment_transactions (
     amount                  BIGINT NOT NULL,
     currency                TEXT NOT NULL,
     provider_tier           TEXT NOT NULL,
-    test_mode               BOOLEAN NOT NULL,
+    payment_sandbox         BOOLEAN NOT NULL,
     status                  TEXT NOT NULL,
     created_at              BIGINT NOT NULL,
     confirmed_at            BIGINT

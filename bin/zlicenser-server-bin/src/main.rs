@@ -29,8 +29,14 @@ enum Commands {
         #[arg(long)]
         new_key_path: PathBuf,
     },
+    /// Interactive wizard to configure database backend and path
+    ConfigureDatabase,
     /// Interactive wizard to configure SMTP email settings
     ConfigureEmail,
+    /// Interactive wizard to configure TSA (timestamp authority) settings
+    ConfigureTsa,
+    /// Interactive wizard to configure payment provider settings
+    ConfigurePayment,
     /// Set the dashboard admin password
     ConfigureDashboardPassword,
     /// Database management subcommands
@@ -76,7 +82,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::RotateKey { new_key_path } => {
             commands::rotate_key(&new_key_path, &config_path).await
         }
+        Commands::ConfigureDatabase => commands::configure_database(&config_path).await,
         Commands::ConfigureEmail => commands::configure_email(&config_path).await,
+        Commands::ConfigureTsa => commands::configure_tsa(&config_path).await,
+        Commands::ConfigurePayment => commands::configure_payment(&config_path).await,
         Commands::ConfigureDashboardPassword => {
             commands::configure_dashboard_password(&config_path).await
         }

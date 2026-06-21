@@ -54,7 +54,7 @@ pub async fn extract_session<S: Storage + Clone + Send + Sync + 'static>(
 #[derive(Serialize)]
 pub struct ChallengeResponse {
     pub nonce: String,
-    pub test_mode: bool,
+    pub payment_sandbox: bool,
 }
 
 pub async fn challenge_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -63,7 +63,7 @@ pub async fn challenge_handler<S: Storage + Clone + Send + Sync + 'static>(
     let nonce = state.auth.new_challenge().await;
     Json(ChallengeResponse {
         nonce,
-        test_mode: state.test_mode,
+        payment_sandbox: state.payment_sandbox,
     })
 }
 
@@ -76,7 +76,7 @@ pub struct VerifyBody {
 #[derive(Serialize)]
 pub struct TokenResponse {
     pub token: String,
-    pub test_mode: bool,
+    pub payment_sandbox: bool,
 }
 
 pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -97,7 +97,7 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
         .await;
         return (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"unauthorized","test_mode":state.test_mode})),
+            Json(json!({"error":"unauthorized","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -116,7 +116,7 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
         .await;
         return (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"unauthorized","test_mode":state.test_mode})),
+            Json(json!({"error":"unauthorized","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     };
@@ -126,7 +126,7 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
         Err(_) => {
             return (
                 StatusCode::UNAUTHORIZED,
-                Json(json!({"error":"unauthorized","test_mode":state.test_mode})),
+                Json(json!({"error":"unauthorized","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -148,7 +148,7 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
         .await;
         return (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"unauthorized","test_mode":state.test_mode})),
+            Json(json!({"error":"unauthorized","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -167,7 +167,7 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
     .await;
     Json(TokenResponse {
         token,
-        test_mode: state.test_mode,
+        payment_sandbox: state.payment_sandbox,
     })
     .into_response()
 }
@@ -184,7 +184,9 @@ pub async fn login_handler<S: Storage + Clone + Send + Sync + 'static>(
     let Some(ref hash) = state.dashboard_password_hash else {
         return (
             StatusCode::FORBIDDEN,
-            Json(json!({"error":"password_not_configured","test_mode":state.test_mode})),
+            Json(
+                json!({"error":"password_not_configured","payment_sandbox":state.payment_sandbox}),
+            ),
         )
             .into_response();
     };
@@ -204,7 +206,7 @@ pub async fn login_handler<S: Storage + Clone + Send + Sync + 'static>(
         .await;
         return (
             StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"unauthorized","test_mode":state.test_mode})),
+            Json(json!({"error":"unauthorized","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -223,7 +225,7 @@ pub async fn login_handler<S: Storage + Clone + Send + Sync + 'static>(
     .await;
     Json(TokenResponse {
         token,
-        test_mode: state.test_mode,
+        payment_sandbox: state.payment_sandbox,
     })
     .into_response()
 }
@@ -251,13 +253,13 @@ pub async fn logout_handler<S: Storage + Clone + Send + Sync + 'static>(
         ),
     )
     .await;
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }
 
 #[derive(Serialize)]
 pub struct SessionInfoResponse {
     pub expires_at: String,
-    pub test_mode: bool,
+    pub payment_sandbox: bool,
 }
 
 pub async fn session_info_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -309,7 +311,7 @@ pub async fn session_info_handler<S: Storage + Clone + Send + Sync + 'static>(
 
     Json(SessionInfoResponse {
         expires_at,
-        test_mode: state.test_mode,
+        payment_sandbox: state.payment_sandbox,
     })
     .into_response()
 }
@@ -330,7 +332,7 @@ pub async fn password_stub_handler<S: Storage + Clone + Send + Sync + 'static>(
         Json(json!({
             "error": "not_implemented",
             "message": "POST /api/auth/password is not yet implemented",
-            "test_mode": state.test_mode
+            "payment_sandbox": state.payment_sandbox
         })),
     )
         .into_response()

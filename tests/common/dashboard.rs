@@ -158,7 +158,7 @@ pub mod with_storage {
         let (status, body) = call(router, req).await;
         assert_eq!(status, StatusCode::OK);
         assert!(!body["nonce"].as_str().unwrap_or("").is_empty());
-        assert_eq!(body["test_mode"], true);
+        assert_eq!(body["payment_sandbox"], true);
     }
 
     pub async fn test_challenge_nonces_are_unique_with<
@@ -302,7 +302,7 @@ pub mod with_storage {
         let (status, body) = authed_get(router, "/api/auth/session", &token).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body["expires_at"].as_str().is_some());
-        assert_eq!(body["test_mode"], true);
+        assert_eq!(body["payment_sandbox"], true);
     }
 
     pub async fn test_logout_invalidates_token_with<S: Storage + Clone + Send + Sync + 'static>(
@@ -408,7 +408,7 @@ pub mod with_storage {
         let (status, body) = authed_get(router, "/api/vendor", &token).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body["public_key_hex"].as_str().is_some());
-        assert_eq!(body["test_mode"], true);
+        assert_eq!(body["payment_sandbox"], true);
     }
 
     pub async fn test_list_customers_returns_empty_ok_with<

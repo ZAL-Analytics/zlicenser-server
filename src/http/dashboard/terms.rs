@@ -20,7 +20,7 @@ use crate::storage::{
     ProductTermsDocument, Storage, TermsValidationStatus, UpgradePolicy, UpgradePolicyRow,
 };
 
-fn declaration_to_json(d: &ProductTermDeclaration, test_mode: bool) -> Value {
+fn declaration_to_json(d: &ProductTermDeclaration, payment_sandbox: bool) -> Value {
     json!({
         "product_id": d.product_id,
         "warranty": d.warranty,
@@ -33,11 +33,11 @@ fn declaration_to_json(d: &ProductTermDeclaration, test_mode: bool) -> Value {
         "support_scope": d.support_scope,
         "support_coverage": d.support_coverage,
         "updates_policy": d.updates_policy,
-        "test_mode": test_mode,
+        "payment_sandbox": payment_sandbox,
     })
 }
 
-fn terms_doc_to_json(d: &ProductTermsDocument, test_mode: bool) -> Value {
+fn terms_doc_to_json(d: &ProductTermsDocument, payment_sandbox: bool) -> Value {
     json!({
         "id": d.id,
         "product_id": d.product_id,
@@ -47,11 +47,11 @@ fn terms_doc_to_json(d: &ProductTermsDocument, test_mode: bool) -> Value {
         "vendor_acknowledged_at": d.vendor_acknowledged_at.map(format_ns_as_rfc3339),
         "activated_at": d.activated_at.map(format_ns_as_rfc3339),
         "created_at": format_ns_as_rfc3339(d.created_at),
-        "test_mode": test_mode,
+        "payment_sandbox": payment_sandbox,
     })
 }
 
-fn field_to_json(f: &ProductCustomerField, test_mode: bool) -> Value {
+fn field_to_json(f: &ProductCustomerField, payment_sandbox: bool) -> Value {
     json!({
         "id": f.id,
         "product_id": f.product_id,
@@ -59,11 +59,11 @@ fn field_to_json(f: &ProductCustomerField, test_mode: bool) -> Value {
         "required": f.required,
         "gdpr_basis": f.gdpr_basis.to_string(),
         "purpose_description": f.purpose_description,
-        "test_mode": test_mode,
+        "payment_sandbox": payment_sandbox,
     })
 }
 
-fn policy_to_json(p: &UpgradePolicyRow, test_mode: bool) -> Value {
+fn policy_to_json(p: &UpgradePolicyRow, payment_sandbox: bool) -> Value {
     json!({
         "id": p.id,
         "product_id": p.product_id,
@@ -71,7 +71,7 @@ fn policy_to_json(p: &UpgradePolicyRow, test_mode: bool) -> Value {
         "to_version": p.to_version,
         "policy": p.policy.to_string(),
         "created_at": format_ns_as_rfc3339(p.created_at),
-        "test_mode": test_mode,
+        "payment_sandbox": payment_sandbox,
     })
 }
 
@@ -88,10 +88,10 @@ pub async fn get_declarations_handler<S: Storage + Clone + Send + Sync + 'static
             .into_response();
     }
     match state.storage.get_term_declaration(id).await {
-        Ok(Some(d)) => Json(declaration_to_json(&d, state.test_mode)).into_response(),
+        Ok(Some(d)) => Json(declaration_to_json(&d, state.payment_sandbox)).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response(),
         Err(e) => (
@@ -133,7 +133,7 @@ pub async fn put_declarations_handler<S: Storage + Clone + Send + Sync + 'static
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -172,7 +172,7 @@ pub async fn put_declarations_handler<S: Storage + Clone + Send + Sync + 'static
     )
     .await;
 
-    Json(declaration_to_json(&decl, state.test_mode)).into_response()
+    Json(declaration_to_json(&decl, state.payment_sandbox)).into_response()
 }
 
 pub async fn get_terms_template_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -193,7 +193,7 @@ pub async fn get_terms_template_handler<S: Storage + Clone + Send + Sync + 'stat
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"not_found","test_mode":state.test_mode})),
+                Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -321,7 +321,7 @@ pub async fn upload_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -376,7 +376,7 @@ pub async fn upload_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
             "validation_findings": findings,
             "rendered_hash": doc.rendered_hash,
             "created_at": format_ns_as_rfc3339(doc.created_at),
-            "test_mode": state.test_mode,
+            "payment_sandbox": state.payment_sandbox,
         })),
     )
         .into_response()
@@ -398,9 +398,9 @@ pub async fn list_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(docs) => {
             let items: Vec<Value> = docs
                 .iter()
-                .map(|d| terms_doc_to_json(d, state.test_mode))
+                .map(|d| terms_doc_to_json(d, state.payment_sandbox))
                 .collect();
-            Json(json!({"items": items, "test_mode": state.test_mode})).into_response()
+            Json(json!({"items": items, "payment_sandbox": state.payment_sandbox})).into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -423,10 +423,10 @@ pub async fn get_terms_document_handler<S: Storage + Clone + Send + Sync + 'stat
             .into_response();
     }
     match state.storage.get_terms_document(doc_id).await {
-        Ok(Some(d)) => Json(terms_doc_to_json(&d, state.test_mode)).into_response(),
+        Ok(Some(d)) => Json(terms_doc_to_json(&d, state.payment_sandbox)).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response(),
         Err(e) => (
@@ -455,7 +455,7 @@ pub async fn acknowledge_terms_handler<S: Storage + Clone + Send + Sync + 'stati
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"not_found","test_mode":state.test_mode})),
+                Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -475,7 +475,7 @@ pub async fn acknowledge_terms_handler<S: Storage + Clone + Send + Sync + 'stati
                 Json(json!({
                     "error": "document_not_ready",
                     "status": doc.validation_status.to_string(),
-                    "test_mode": state.test_mode,
+                    "payment_sandbox": state.payment_sandbox,
                 })),
             )
                 .into_response();
@@ -486,7 +486,7 @@ pub async fn acknowledge_terms_handler<S: Storage + Clone + Send + Sync + 'stati
     if doc.activated_at.is_some() {
         return (
             StatusCode::CONFLICT,
-            Json(json!({"error":"already_activated","test_mode":state.test_mode})),
+            Json(json!({"error":"already_activated","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -525,7 +525,7 @@ pub async fn acknowledge_terms_handler<S: Storage + Clone + Send + Sync + 'stati
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }
 
 pub async fn get_fields_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -544,9 +544,9 @@ pub async fn get_fields_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(fields) => {
             let items: Vec<Value> = fields
                 .iter()
-                .map(|f| field_to_json(f, state.test_mode))
+                .map(|f| field_to_json(f, state.payment_sandbox))
                 .collect();
-            Json(json!({"fields": items, "test_mode": state.test_mode})).into_response()
+            Json(json!({"fields": items, "payment_sandbox": state.payment_sandbox})).into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -586,7 +586,7 @@ pub async fn put_fields_handler<S: Storage + Clone + Send + Sync + 'static>(
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -632,9 +632,9 @@ pub async fn put_fields_handler<S: Storage + Clone + Send + Sync + 'static>(
 
     let items: Vec<Value> = fields
         .iter()
-        .map(|f| field_to_json(f, state.test_mode))
+        .map(|f| field_to_json(f, state.payment_sandbox))
         .collect();
-    Json(json!({"fields": items, "test_mode": state.test_mode})).into_response()
+    Json(json!({"fields": items, "payment_sandbox": state.payment_sandbox})).into_response()
 }
 
 pub async fn get_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -655,7 +655,7 @@ pub async fn get_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"not_found","test_mode":state.test_mode})),
+                Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -681,7 +681,7 @@ pub async fn get_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
 
     let policy_items: Vec<Value> = policies
         .iter()
-        .map(|p| policy_to_json(p, state.test_mode))
+        .map(|p| policy_to_json(p, state.payment_sandbox))
         .collect();
 
     Json(json!({
@@ -689,7 +689,7 @@ pub async fn get_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
         "min_client_version_warning": product.min_client_version_warning,
         "min_client_version_required": product.min_client_version_required,
         "upgrade_policies": policy_items,
-        "test_mode": state.test_mode,
+        "payment_sandbox": state.payment_sandbox,
     }))
     .into_response()
 }
@@ -720,7 +720,7 @@ pub async fn patch_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"not_found","test_mode":state.test_mode})),
+                Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -768,7 +768,7 @@ pub async fn patch_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
         "bundle_version": product.bundle_version,
         "min_client_version_warning": product.min_client_version_warning,
         "min_client_version_required": product.min_client_version_required,
-        "test_mode": state.test_mode,
+        "payment_sandbox": state.payment_sandbox,
     }))
     .into_response()
 }
@@ -797,13 +797,13 @@ pub async fn create_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
 
     let Ok(policy) = body.policy.parse::<UpgradePolicy>() else {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error":"bad_request","message":"invalid policy","test_mode":state.test_mode}))).into_response();
+        return (StatusCode::BAD_REQUEST, Json(json!({"error":"bad_request","message":"invalid policy","payment_sandbox":state.payment_sandbox}))).into_response();
     };
 
     let row = UpgradePolicyRow {
@@ -837,7 +837,7 @@ pub async fn create_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
 
     (
         StatusCode::CREATED,
-        Json(policy_to_json(&row, state.test_mode)),
+        Json(policy_to_json(&row, state.payment_sandbox)),
     )
         .into_response()
 }
@@ -865,7 +865,7 @@ pub async fn delete_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
     {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -890,5 +890,5 @@ pub async fn delete_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }

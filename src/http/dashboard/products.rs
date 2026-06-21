@@ -18,7 +18,7 @@ use crate::storage::{
     TransferPolicy, TsaTier,
 };
 
-fn product_to_json(p: &Product, test_mode: bool) -> Value {
+fn product_to_json(p: &Product, payment_sandbox: bool) -> Value {
     json!({
         "id": p.id,
         "name": p.name,
@@ -42,7 +42,7 @@ fn product_to_json(p: &Product, test_mode: bool) -> Value {
         "active": p.active,
         "created_at": p.created_at,
         "updated_at": p.updated_at,
-        "test_mode": test_mode,
+        "payment_sandbox": payment_sandbox,
     })
 }
 
@@ -61,9 +61,10 @@ pub async fn list_products_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(products) => {
             let items: Vec<Value> = products
                 .iter()
-                .map(|p| product_to_json(p, state.test_mode))
+                .map(|p| product_to_json(p, state.payment_sandbox))
                 .collect();
-            Json(json!({"products": items, "test_mode": state.test_mode})).into_response()
+            Json(json!({"products": items, "payment_sandbox": state.payment_sandbox}))
+                .into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -104,7 +105,7 @@ pub async fn create_product_handler<S: Storage + Clone + Send + Sync + 'static>(
     let Ok(connectivity_mode) = body.connectivity_mode.parse::<ConnectivityMode>() else {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({"error":"bad_request","message":"invalid connectivity_mode","test_mode":state.test_mode})),
+            Json(json!({"error":"bad_request","message":"invalid connectivity_mode","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     };
@@ -179,7 +180,7 @@ pub async fn create_product_handler<S: Storage + Clone + Send + Sync + 'static>(
 
     (
         StatusCode::CREATED,
-        Json(product_to_json(&product, state.test_mode)),
+        Json(product_to_json(&product, state.payment_sandbox)),
     )
         .into_response()
 }
@@ -197,10 +198,10 @@ pub async fn get_product_handler<S: Storage + Clone + Send + Sync + 'static>(
             .into_response();
     }
     match state.storage.get_product(id).await {
-        Ok(Some(p)) => Json(product_to_json(&p, state.test_mode)).into_response(),
+        Ok(Some(p)) => Json(product_to_json(&p, state.payment_sandbox)).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response(),
         Err(e) => (
@@ -248,7 +249,7 @@ pub async fn update_product_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"not_found","test_mode":state.test_mode})),
+                Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -325,7 +326,7 @@ pub async fn update_product_handler<S: Storage + Clone + Send + Sync + 'static>(
     )
     .await;
 
-    Json(product_to_json(&product, state.test_mode)).into_response()
+    Json(product_to_json(&product, state.payment_sandbox)).into_response()
 }
 
 pub async fn delete_product_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -344,7 +345,7 @@ pub async fn delete_product_handler<S: Storage + Clone + Send + Sync + 'static>(
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response();
     }
@@ -353,7 +354,7 @@ pub async fn delete_product_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(count) if count > 0 => {
             return (
                 StatusCode::CONFLICT,
-                Json(json!({"error":"license_has_been_issued","message":"cannot delete product: a license has already been issued","test_mode":state.test_mode})),
+                Json(json!({"error":"license_has_been_issued","message":"cannot delete product: a license has already been issued","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response()
         }
@@ -387,7 +388,7 @@ pub async fn delete_product_handler<S: Storage + Clone + Send + Sync + 'static>(
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }
 
 pub async fn activate_product_handler<S: Storage + Clone + Send + Sync + 'static>(
@@ -408,7 +409,7 @@ pub async fn activate_product_handler<S: Storage + Clone + Send + Sync + 'static
         Ok(None) => {
             return (
                 StatusCode::NOT_FOUND,
-                Json(json!({"error":"not_found","test_mode":state.test_mode})),
+                Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
             )
                 .into_response();
         }
@@ -464,7 +465,7 @@ pub async fn activate_product_handler<S: Storage + Clone + Send + Sync + 'static
             Json(json!({
                 "error": "activation_conditions_not_met",
                 "conditions": conditions,
-                "test_mode": state.test_mode
+                "payment_sandbox": state.payment_sandbox
             })),
         )
             .into_response();
@@ -494,5 +495,5 @@ pub async fn activate_product_handler<S: Storage + Clone + Send + Sync + 'static
     )
     .await;
 
-    Json(json!({"ok":true,"test_mode":state.test_mode})).into_response()
+    Json(json!({"ok":true,"payment_sandbox":state.payment_sandbox})).into_response()
 }

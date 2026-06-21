@@ -243,7 +243,7 @@ struct DbPaymentTransaction {
     amount: i64,
     currency: String,
     provider_tier: String,
-    test_mode: i64,
+    payment_sandbox: i64,
     status: String,
     created_at: i64,
     confirmed_at: Option<i64>,
@@ -512,7 +512,7 @@ fn from_db_payment_transaction(r: DbPaymentTransaction) -> crate::Result<Payment
         amount: r.amount,
         currency: r.currency,
         provider_tier: decode_enum(r.provider_tier)?,
-        test_mode: int_to_bool(r.test_mode),
+        payment_sandbox: int_to_bool(r.payment_sandbox),
         status: decode_enum(r.status)?,
         created_at: r.created_at,
         confirmed_at: r.confirmed_at,
@@ -1674,7 +1674,7 @@ impl PaymentStore for SqliteStorage {
         sqlx::query(
             "INSERT INTO payment_transactions \
              (id, license_id, provider, provider_transaction_id, amount, currency, \
-              provider_tier, test_mode, status, created_at, confirmed_at) \
+              provider_tier, payment_sandbox, status, created_at, confirmed_at) \
              VALUES (?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(uuid_to_blob(t.id))
@@ -1684,7 +1684,7 @@ impl PaymentStore for SqliteStorage {
         .bind(t.amount)
         .bind(&t.currency)
         .bind(encode_enum(&t.provider_tier))
-        .bind(bool_to_int(t.test_mode))
+        .bind(bool_to_int(t.payment_sandbox))
         .bind(encode_enum(&t.status))
         .bind(t.created_at)
         .bind(t.confirmed_at)

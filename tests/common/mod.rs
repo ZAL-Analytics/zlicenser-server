@@ -543,7 +543,7 @@ pub async fn test_payment_transaction(s: &dyn Storage, f: &Fixture) {
         amount: 9900,
         currency: "EUR".to_string(),
         provider_tier: ProviderTier::Verified,
-        test_mode: false,
+        payment_sandbox: false,
         status: PaymentStatus::Pending,
         created_at: 1_000_000,
         confirmed_at: None,

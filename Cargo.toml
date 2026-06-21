@@ -42,6 +42,7 @@ default = ["storage-sqlite", "http-server"]
 http-server = ["dep:axum", "dep:tower", "dep:tower-http", "dep:bcrypt", "dep:base64", "dep:hex"]
 storage-sqlite = ["dep:sqlx", "sqlx?/sqlite", "sqlx?/migrate"]
 storage-postgres = ["dep:sqlx", "sqlx?/postgres", "sqlx?/migrate"]
+tsa-qtsa = ["dep:reqwest", "zlicenser-protocol/tsa-clients"]
 payment-stripe = ["dep:reqwest"]
 
 [dependencies]

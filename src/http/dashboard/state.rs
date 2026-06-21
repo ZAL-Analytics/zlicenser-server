@@ -95,7 +95,7 @@ pub struct DashboardState<S> {
     pub storage: Arc<S>,
     pub auth: Arc<DashboardAuthManager>,
     pub verifying_key: VerifyingKey,
-    pub test_mode: bool,
+    pub payment_sandbox: bool,
     pub dashboard_password_hash: Option<String>,
 }
 
@@ -103,14 +103,14 @@ impl<S: Storage + Clone + Send + Sync + 'static> DashboardState<S> {
     pub fn new(
         storage: Arc<S>,
         verifying_key: VerifyingKey,
-        test_mode: bool,
+        payment_sandbox: bool,
         dashboard_password_hash: Option<String>,
     ) -> Arc<Self> {
         Arc::new(Self {
             storage,
             auth: DashboardAuthManager::new(),
             verifying_key,
-            test_mode,
+            payment_sandbox,
             dashboard_password_hash,
         })
     }

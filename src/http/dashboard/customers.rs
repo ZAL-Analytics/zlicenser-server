@@ -14,7 +14,7 @@ use super::state::DashboardState;
 use super::util::format_ns_as_rfc3339;
 use crate::storage::{Customer, Storage};
 
-fn customer_to_json(c: &Customer, test_mode: bool) -> Value {
+fn customer_to_json(c: &Customer, payment_sandbox: bool) -> Value {
     json!({
         "id": c.id,
         "product_id": c.product_id,
@@ -23,7 +23,7 @@ fn customer_to_json(c: &Customer, test_mode: bool) -> Value {
         "field_values": c.field_values,
         "created_at": format_ns_as_rfc3339(c.created_at),
         "updated_at": format_ns_as_rfc3339(c.updated_at),
-        "test_mode": test_mode,
+        "payment_sandbox": payment_sandbox,
     })
 }
 
@@ -47,9 +47,9 @@ pub async fn list_customers_handler<S: Storage + Clone + Send + Sync + 'static>(
         Ok(customers) => {
             let items: Vec<Value> = customers
                 .iter()
-                .map(|c| customer_to_json(c, state.test_mode))
+                .map(|c| customer_to_json(c, state.payment_sandbox))
                 .collect();
-            Json(json!({"items": items, "test_mode": state.test_mode})).into_response()
+            Json(json!({"items": items, "payment_sandbox": state.payment_sandbox})).into_response()
         }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -72,10 +72,10 @@ pub async fn get_customer_handler<S: Storage + Clone + Send + Sync + 'static>(
             .into_response();
     }
     match state.storage.get_customer(id).await {
-        Ok(Some(c)) => Json(customer_to_json(&c, state.test_mode)).into_response(),
+        Ok(Some(c)) => Json(customer_to_json(&c, state.payment_sandbox)).into_response(),
         Ok(None) => (
             StatusCode::NOT_FOUND,
-            Json(json!({"error":"not_found","test_mode":state.test_mode})),
+            Json(json!({"error":"not_found","payment_sandbox":state.payment_sandbox})),
         )
             .into_response(),
         Err(e) => (

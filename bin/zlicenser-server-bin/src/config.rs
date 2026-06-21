@@ -16,6 +16,8 @@ pub struct DatabaseSection {
     pub backend: Option<String>,
     pub path: Option<PathBuf>,
     pub url: Option<String>,
+    pub url_env: Option<String>,
+    pub url_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -56,6 +58,28 @@ pub struct SecuritySection {
 }
 
 #[derive(Debug, Deserialize, Default)]
+pub struct TsaSection {
+    pub provider: Option<String>,
+    /// Name of the environment variable holding the TSA endpoint URL (with embedded credentials).
+    pub url_env: Option<String>,
+    /// Path to a 0600 file holding the TSA endpoint URL.
+    pub url_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct PaymentSection {
+    pub provider: Option<String>,
+    /// Name of the environment variable holding the Stripe secret key.
+    pub secret_key_env: Option<String>,
+    /// Path to a 0600 file holding the Stripe secret key.
+    pub secret_key_file: Option<PathBuf>,
+    /// Name of the environment variable holding the Stripe webhook signing secret.
+    pub webhook_secret_env: Option<String>,
+    /// Path to a 0600 file holding the Stripe webhook signing secret.
+    pub webhook_secret_file: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub struct AppConfig {
     pub server: Option<ServerSection>,
     pub database: Option<DatabaseSection>,
@@ -63,6 +87,41 @@ pub struct AppConfig {
     pub email: Option<EmailSection>,
     pub log: Option<LogSection>,
     pub security: Option<SecuritySection>,
+    pub tsa: Option<TsaSection>,
+    pub payment: Option<PaymentSection>,
+}
+
+/// Resolves a secret from either an env var name or a 0600 file path.
+pub fn resolve_secret(
+    env_var: Option<&str>,
+    file: Option<&Path>,
+) -> anyhow::Result<Option<String>> {
+    if let Some(var) = env_var {
+        let val = std::env::var(var)
+            .with_context(|| format!("env var `{var}` (referenced in config) is not set"))?;
+        return Ok(Some(val));
+    }
+    if let Some(path) = file {
+        check_secret_file_permissions(path)?;
+        let val = std::fs::read_to_string(path)
+            .with_context(|| format!("reading secret file {}", path.display()))?;
+        return Ok(Some(val.trim().to_string()));
+    }
+    Ok(None)
+}
+
+fn check_secret_file_permissions(path: &Path) -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let meta = std::fs::metadata(path)
+        .with_context(|| format!("reading metadata for {}", path.display()))?;
+    let mode = meta.permissions().mode();
+    anyhow::ensure!(
+        mode & 0o177 == 0,
+        "secret file {} has permissions {:04o}; must be exactly 0600",
+        path.display(),
+        mode & 0o777
+    );
+    Ok(())
 }
 
 /// Loads config from the given path, or searches standard locations.
@@ -123,6 +182,43 @@ pub fn update_toml(
         doc[section] = toml_edit::Item::Table(toml_edit::Table::new());
     }
     doc[section][key] = toml_edit::value(val.into());
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating directory {}", parent.display()))?;
+        }
+    }
+    std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))?;
+
+    Ok(())
+}
+
+/// Updates a key nested under `[section.subsection]`.
+pub fn update_toml_nested(
+    path: &Path,
+    section: &str,
+    subsection: &str,
+    key: &str,
+    val: impl Into<toml_edit::Value>,
+) -> anyhow::Result<()> {
+    let content = if path.exists() {
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?
+    } else {
+        String::new()
+    };
+
+    let mut doc: toml_edit::DocumentMut = content
+        .parse()
+        .with_context(|| format!("parsing {}", path.display()))?;
+
+    if doc.get(section).is_none() {
+        doc[section] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    if doc[section].get(subsection).is_none() {
+        doc[section][subsection] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    doc[section][subsection][key] = toml_edit::value(val.into());
 
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -199,41 +295,4 @@ rate_limit_burst = 20
             "error should mention the config file path; got: {msg}"
         );
     }
-}
-
-/// Updates a key nested under `[section.subsection]`.
-pub fn update_toml_nested(
-    path: &Path,
-    section: &str,
-    subsection: &str,
-    key: &str,
-    val: impl Into<toml_edit::Value>,
-) -> anyhow::Result<()> {
-    let content = if path.exists() {
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?
-    } else {
-        String::new()
-    };
-
-    let mut doc: toml_edit::DocumentMut = content
-        .parse()
-        .with_context(|| format!("parsing {}", path.display()))?;
-
-    if doc.get(section).is_none() {
-        doc[section] = toml_edit::Item::Table(toml_edit::Table::new());
-    }
-    if doc[section].get(subsection).is_none() {
-        doc[section][subsection] = toml_edit::Item::Table(toml_edit::Table::new());
-    }
-    doc[section][subsection][key] = toml_edit::value(val.into());
-
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating directory {}", parent.display()))?;
-        }
-    }
-    std::fs::write(path, doc.to_string()).with_context(|| format!("writing {}", path.display()))?;
-
-    Ok(())
 }

@@ -44,7 +44,7 @@ pub struct CaptureConfirmation {
 #[async_trait::async_trait]
 pub trait PaymentProvider: Send + Sync {
     fn tier(&self) -> PaymentTier;
-    fn is_test_mode(&self) -> bool;
+    fn is_payment_sandbox(&self) -> bool;
 
     async fn create_intent(&self, money: Money, metadata: PaymentMetadata)
     -> Result<PaymentIntent>;
