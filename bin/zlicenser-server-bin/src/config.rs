@@ -23,7 +23,6 @@ pub struct DatabaseSection {
 #[derive(Debug, Deserialize, Default)]
 pub struct VendorSection {
     pub private_key_path: Option<PathBuf>,
-    pub dashboard_password_hash: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use crate::http::extract::{JsonBody, PathParam};
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -11,6 +12,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::auth::extract_session;
+use super::rbac::Permission;
 use super::state::DashboardState;
 use super::util::{append_audit, format_ns_as_rfc3339, new_audit_entry, now_ns};
 use crate::storage::{
@@ -44,12 +46,15 @@ pub async fn list_security_events_handler<S: Storage + Clone + Send + Sync + 'st
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::SecurityRead) {
+        return r;
     }
 
     let filter = SecurityEventFilter {
@@ -91,7 +96,7 @@ pub async fn list_security_events_handler<S: Storage + Clone + Send + Sync + 'st
 pub async fn review_security_event_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<i64>,
+    PathParam(id): PathParam<i64>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -100,6 +105,9 @@ pub async fn review_security_event_handler<S: Storage + Clone + Send + Sync + 's
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::SecurityRespond) {
+        return r;
+    }
 
     let now = now_ns();
     if let Err(e) = state.storage.mark_security_event_reviewed(id, now).await {
@@ -118,6 +126,7 @@ pub async fn review_security_event_handler<S: Storage + Clone + Send + Sync + 's
             AuditTargetType::SecurityEvent,
             None,
             Some(id.to_string()),
+            session.user_id,
         ),
     )
     .await;
@@ -128,7 +137,7 @@ pub async fn review_security_event_handler<S: Storage + Clone + Send + Sync + 's
 pub async fn false_positive_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<i64>,
+    PathParam(id): PathParam<i64>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -137,6 +146,9 @@ pub async fn false_positive_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::SecurityRespond) {
+        return r;
+    }
 
     let now = now_ns();
     if let Err(e) = state
@@ -159,6 +171,7 @@ pub async fn false_positive_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::SecurityEvent,
             None,
             Some(id.to_string()),
+            session.user_id,
         ),
     )
     .await;
@@ -174,8 +187,8 @@ pub struct QuarantineBody {
 pub async fn quarantine_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(binding_id): Path<Uuid>,
-    Json(body): Json<QuarantineBody>,
+    PathParam(binding_id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<QuarantineBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -184,6 +197,9 @@ pub async fn quarantine_binding_handler<S: Storage + Clone + Send + Sync + 'stat
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::SecurityRespond) {
+        return r;
+    }
 
     if state
         .storage
@@ -262,6 +278,7 @@ pub async fn quarantine_binding_handler<S: Storage + Clone + Send + Sync + 'stat
             AuditTargetType::Binding,
             Some(binding_id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -273,7 +290,7 @@ pub async fn quarantine_binding_handler<S: Storage + Clone + Send + Sync + 'stat
 pub async fn terminate_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(binding_id): Path<Uuid>,
+    PathParam(binding_id): PathParam<Uuid>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -282,6 +299,9 @@ pub async fn terminate_binding_handler<S: Storage + Clone + Send + Sync + 'stati
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::SecurityRespond) {
+        return r;
+    }
 
     if state
         .storage
@@ -346,6 +366,7 @@ pub async fn terminate_binding_handler<S: Storage + Clone + Send + Sync + 'stati
             AuditTargetType::Binding,
             Some(binding_id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -356,7 +377,7 @@ pub async fn terminate_binding_handler<S: Storage + Clone + Send + Sync + 'stati
 pub async fn resume_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(binding_id): Path<Uuid>,
+    PathParam(binding_id): PathParam<Uuid>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -365,6 +386,9 @@ pub async fn resume_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::SecurityRespond) {
+        return r;
+    }
 
     if state
         .storage
@@ -436,6 +460,7 @@ pub async fn resume_binding_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Binding,
             Some(binding_id),
             None,
+            session.user_id,
         ),
     )
     .await;

@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use crate::http::extract::PathParam;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -10,6 +11,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::auth::extract_session;
+use super::rbac::Permission;
 use super::state::DashboardState;
 use super::util::format_ns_as_rfc3339;
 use crate::storage::{Customer, Storage};
@@ -33,12 +35,15 @@ pub async fn list_customers_handler<S: Storage + Clone + Send + Sync + 'static>(
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::CustomersRead) {
+        return r;
     }
 
     let product_id = params.get("product_id").and_then(|s| s.parse().ok());
@@ -62,14 +67,17 @@ pub async fn list_customers_handler<S: Storage + Clone + Send + Sync + 'static>(
 pub async fn get_customer_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::CustomersRead) {
+        return r;
     }
     match state.storage.get_customer(id).await {
         Ok(Some(c)) => Json(customer_to_json(&c, state.payment_sandbox)).into_response(),

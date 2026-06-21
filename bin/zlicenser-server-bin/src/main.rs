@@ -37,8 +37,15 @@ enum Commands {
     ConfigureTsa,
     /// Interactive wizard to configure payment provider settings
     ConfigurePayment,
-    /// Set the dashboard admin password
-    ConfigureDashboardPassword,
+    /// Create the first Owner staff user
+    CreateOwner {
+        /// Base64-encoded challenge nonce (from `sign-challenge`)
+        #[arg(long)]
+        nonce: Option<String>,
+        /// Base64url-encoded Ed25519 signature over the nonce
+        #[arg(long)]
+        signature: Option<String>,
+    },
     /// Database management subcommands
     Db {
         #[command(subcommand)]
@@ -86,8 +93,8 @@ async fn main() -> anyhow::Result<()> {
         Commands::ConfigureEmail => commands::configure_email(&config_path).await,
         Commands::ConfigureTsa => commands::configure_tsa(&config_path).await,
         Commands::ConfigurePayment => commands::configure_payment(&config_path).await,
-        Commands::ConfigureDashboardPassword => {
-            commands::configure_dashboard_password(&config_path).await
+        Commands::CreateOwner { nonce, signature } => {
+            commands::create_owner(&cfg, nonce.as_deref(), signature.as_deref()).await
         }
         Commands::Db {
             command: DbCommands::Migrate,

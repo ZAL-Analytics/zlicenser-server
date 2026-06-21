@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
-    extract::{Path, State},
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::http::extract::{JsonBody, PathParam};
 use crate::issuance::handlers::HandlerContext;
 use crate::storage::Storage;
 
@@ -19,8 +19,8 @@ pub struct UpgradeBody {
 
 pub async fn upgrade_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(ctx): State<Arc<HandlerContext<S>>>,
-    Path(license_id): Path<Uuid>,
-    Json(body): Json<UpgradeBody>,
+    PathParam(license_id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<UpgradeBody>,
 ) -> Response {
     match crate::issuance::upgrade::handle_upgrade_activation(
         &ctx.storage,

@@ -28,7 +28,7 @@ pub mod with_storage {
         },
         storage::{
             AuditStore, CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore,
-            SecurityStore, Storage, VendorStore, types::*,
+            SecurityStore, StaffUserStore, Storage, VendorStore, types::*,
         },
     };
 
@@ -539,6 +539,45 @@ pub mod with_storage {
             _: &AuditFilter,
             _: Page,
         ) -> zlicenser_server::Result<Paginated<AuditEntry>> {
+            unimplemented!()
+        }
+    }
+
+    #[async_trait]
+    impl StaffUserStore for BrokenDb {
+        async fn create_staff_user(&self, _: &NewStaffUser) -> zlicenser_server::Result<StaffUser> {
+            unimplemented!()
+        }
+        async fn get_staff_user_by_id(
+            &self,
+            _: Uuid,
+        ) -> zlicenser_server::Result<Option<StaffUser>> {
+            unimplemented!()
+        }
+        async fn get_staff_user_by_email(
+            &self,
+            _: &str,
+        ) -> zlicenser_server::Result<Option<StaffUser>> {
+            unimplemented!()
+        }
+        async fn list_staff_users(&self) -> zlicenser_server::Result<Vec<StaffUser>> {
+            unimplemented!()
+        }
+        async fn update_staff_user(
+            &self,
+            _: Uuid,
+            _: &StaffUserUpdate,
+        ) -> zlicenser_server::Result<Option<StaffUser>> {
+            unimplemented!()
+        }
+        async fn update_staff_user_last_login(
+            &self,
+            _: Uuid,
+            _: i64,
+        ) -> zlicenser_server::Result<()> {
+            unimplemented!()
+        }
+        async fn count_active_owners(&self) -> zlicenser_server::Result<u64> {
             unimplemented!()
         }
     }

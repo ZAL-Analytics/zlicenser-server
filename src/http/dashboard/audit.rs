@@ -10,6 +10,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::auth::extract_session;
+use super::rbac::Permission;
 use super::state::DashboardState;
 use super::util::{format_ns_as_rfc3339, parse_iso_ns};
 use crate::storage::{AuditEntry, AuditFilter, Page, Storage};
@@ -23,6 +24,7 @@ fn audit_entry_to_json(e: &AuditEntry) -> serde_json::Value {
         "target_type": e.target_type.to_string(),
         "target_id": e.target_id,
         "detail": e.detail,
+        "actor_id": e.actor_id,
     })
 }
 
@@ -32,12 +34,15 @@ pub async fn list_audit_log_handler<S: Storage + Clone + Send + Sync + 'static>(
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::AuditRead) {
+        return r;
     }
 
     let action = params.get("action").and_then(|s| s.parse().ok());

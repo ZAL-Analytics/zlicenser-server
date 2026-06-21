@@ -9,6 +9,7 @@ use axum::{
 use serde_json::json;
 
 use super::auth::extract_session;
+use super::rbac::Permission;
 use super::state::DashboardState;
 use super::util::format_ns_as_rfc3339;
 use crate::storage::Storage;
@@ -17,12 +18,15 @@ pub async fn get_vendor_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::VendorRead) {
+        return r;
     }
 
     match state.storage.get_vendor_config().await {

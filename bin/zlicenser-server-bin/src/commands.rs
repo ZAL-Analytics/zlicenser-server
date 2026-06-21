@@ -372,18 +372,14 @@ where
     );
     let login_rate_limit = GovernorLayer::new(login_governor_cfg);
 
-    // Build dashboard state
-    let dashboard_password_hash = cfg
-        .vendor
-        .as_ref()
-        .and_then(|v| v.dashboard_password_hash.clone());
+    if storage.count_active_owners().await? == 0 {
+        tracing::warn!(
+            "No active Owner staff user found. Run `zlicenser-server create-owner` to create one."
+        );
+    }
+
     let verifying_key = signing_key.verifying_key();
-    let dashboard_state = DashboardState::new(
-        Arc::clone(&storage),
-        verifying_key,
-        payment_sandbox,
-        dashboard_password_hash,
-    );
+    let dashboard_state = DashboardState::new(Arc::clone(&storage), verifying_key, payment_sandbox);
 
     // Assemble app router
     let health_state = HealthState {
@@ -979,22 +975,136 @@ async fn send_test_email(
     Ok(())
 }
 
-pub(crate) fn set_dashboard_password_hash(config_path: &Path, hash: &str) -> anyhow::Result<()> {
-    update_toml(config_path, "vendor", "dashboard_password_hash", hash)
+// create-owner
+pub async fn create_owner(
+    cfg: &AppConfig,
+    nonce: Option<&str>,
+    signature: Option<&str>,
+) -> anyhow::Result<()> {
+    let backend = cfg
+        .database
+        .as_ref()
+        .and_then(|d| d.backend.as_deref())
+        .unwrap_or("sqlite");
+
+    match backend {
+        "sqlite" => {
+            use zlicenser_server::storage::sqlite::SqliteStorage;
+            let db_path = resolve_sqlite_path(cfg)?;
+            let url = format!("sqlite:{db_path}?mode=rwc");
+            let storage = SqliteStorage::new(&url)
+                .await
+                .context("connecting to SQLite database")?;
+            run_create_owner(Arc::new(storage), cfg, nonce, signature).await
+        }
+        "postgres" => {
+            use zlicenser_server::storage::postgres::PostgresStorage;
+            let url = resolve_postgres_url(cfg)?;
+            let storage = PostgresStorage::new(&url)
+                .await
+                .context("connecting to PostgreSQL database")?;
+            run_create_owner(Arc::new(storage), cfg, nonce, signature).await
+        }
+        other => anyhow::bail!("unknown database backend '{other}'"),
+    }
 }
 
-// configure-dashboard-password
-pub async fn configure_dashboard_password(config_path: &Path) -> anyhow::Result<()> {
-    let password =
-        rpassword::prompt_password("Dashboard admin password: ").context("reading password")?;
+async fn run_create_owner<S: zlicenser_server::storage::Storage + Send + Sync + 'static>(
+    storage: Arc<S>,
+    cfg: &AppConfig,
+    nonce: Option<&str>,
+    signature: Option<&str>,
+) -> anyhow::Result<()> {
+    use argon2::{
+        password_hash::{PasswordHasher, SaltString},
+        Argon2,
+    };
+    use rand::rngs::OsRng;
+    use zlicenser_server::storage::{NewStaffUser, Role};
+
+    match (nonce, signature) {
+        (Some(nonce), Some(sig_b64)) => {
+            use base64::Engine as _;
+            let (signing_key, _) = load_signing_key(cfg)?;
+            let sig_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(sig_b64)
+                .context("invalid signature base64")?;
+            let sig_array: [u8; 64] = sig_bytes
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("signature must be 64 bytes"))?;
+            let sig = ed25519_dalek::Signature::from_bytes(&sig_array);
+            use ed25519_dalek::Verifier as _;
+            signing_key
+                .verifying_key()
+                .verify(nonce.as_bytes(), &sig)
+                .context("signature verification failed")?;
+        }
+        (None, None) => {
+            let count = storage
+                .count_active_owners()
+                .await
+                .context("querying active owners")?;
+            anyhow::ensure!(
+                count == 0,
+                "Active Owner accounts already exist. Provide --nonce and --signature to bypass."
+            );
+        }
+        _ => {
+            anyhow::bail!("provide both --nonce and --signature, or neither");
+        }
+    }
+
+    let mut email_input = String::new();
+    print!("Owner email: ");
+    use std::io::Write as _;
+    std::io::stdout().flush()?;
+    std::io::stdin().read_line(&mut email_input)?;
+    let email = email_input.trim().to_string();
+    anyhow::ensure!(!email.is_empty(), "email is required");
+
+    let mut name_input = String::new();
+    print!("Display name: ");
+    std::io::stdout().flush()?;
+    std::io::stdin().read_line(&mut name_input)?;
+    let display_name = name_input.trim().to_string();
+    anyhow::ensure!(!display_name.is_empty(), "display name is required");
+
+    let password = rpassword::prompt_password("Password: ").context("reading password")?;
     let confirm =
         rpassword::prompt_password("Confirm password: ").context("reading confirmation")?;
     anyhow::ensure!(password == confirm, "passwords do not match");
+    anyhow::ensure!(!password.is_empty(), "password is required");
 
-    let hash = bcrypt::hash(&password, bcrypt::DEFAULT_COST).context("hashing password")?;
+    let salt = SaltString::generate(&mut OsRng);
+    let password_hash = Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|e| anyhow::anyhow!("failed to hash password: {e}"))?
+        .to_string();
 
-    set_dashboard_password_hash(config_path, &hash)?;
-    println!("Dashboard password configured.");
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .try_into()
+        .unwrap_or(i64::MAX);
+
+    let new_user = NewStaffUser {
+        id: uuid::Uuid::new_v4(),
+        email,
+        password_hash,
+        display_name,
+        role: Role::Owner,
+        created_by: None,
+        created_at: now_ns,
+        updated_at: now_ns,
+    };
+
+    let user = storage
+        .create_staff_user(&new_user)
+        .await
+        .context("creating owner staff user")?;
+
+    println!("Owner staff user created: {}", user.id);
     Ok(())
 }
 
@@ -1182,7 +1292,7 @@ fn prompt_secret_storage(
     use std::io::Write as _;
 
     println!("Store {label} as:");
-    println!("  1. File (0600) — recommended");
+    println!("  1. File (0600), recommended");
     println!("  2. Environment variable name");
     print!("Choice [1]: ");
     std::io::stdout().flush()?;

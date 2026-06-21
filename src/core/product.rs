@@ -108,14 +108,14 @@ fn validate_phone(value: &str) -> crate::Result<()> {
     if !digits.bytes().all(|b| b.is_ascii_digit()) {
         return Err(Error::InvalidFieldValue {
             field: "phone".to_owned(),
-            reason: "digits after '+' must all be 0–9".to_owned(),
+            reason: "digits after '+' must all be 0-9".to_owned(),
         });
     }
-    // E.164: + followed by 7–15 digits = total length 8–16
+    // E.164: + followed by 7-15 digits = total length 8-16
     if value.len() < 8 || value.len() > 16 {
         return Err(Error::InvalidFieldValue {
             field: "phone".to_owned(),
-            reason: format!("E.164 number must be 8–16 chars total, got {}", value.len()),
+            reason: format!("E.164 number must be 8-16 chars total, got {}", value.len()),
         });
     }
     Ok(())
@@ -179,7 +179,7 @@ fn validate_company_name(value: &str) -> crate::Result<()> {
 fn validate_eu_vat_number(value: &str) -> crate::Result<()> {
     let bad = || Error::InvalidFieldValue {
         field: "eu_vat_number".to_owned(),
-        reason: format!("'{value}' is not a valid EU VAT number (CC + 2–13 alphanumeric chars)"),
+        reason: format!("'{value}' is not a valid EU VAT number (CC + 2-13 alphanumeric chars)"),
     };
     if value.len() < 4 {
         return Err(bad());
@@ -249,10 +249,10 @@ fn validate_date_of_birth(value: &str) -> crate::Result<()> {
         .map_err(|_| err("month must be a number"))?;
     let day: u32 = day_str.parse().map_err(|_| err("day must be a number"))?;
     if !(1..=12).contains(&month) {
-        return Err(err("month must be 1–12"));
+        return Err(err("month must be 1-12"));
     }
     if !(1..=31).contains(&day) {
-        return Err(err("day must be 1–31"));
+        return Err(err("day must be 1-31"));
     }
     let age = current_year().saturating_sub(year);
     if age < 13 {

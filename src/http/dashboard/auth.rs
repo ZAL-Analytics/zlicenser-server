@@ -1,5 +1,9 @@
 use std::sync::Arc;
 
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHash, PasswordVerifier},
+};
 use axum::{
     Json,
     extract::State,
@@ -9,16 +13,32 @@ use axum::{
 use ed25519_dalek::{Signature, Verifier};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use uuid::Uuid;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as B64};
 
+use super::rbac::Permission;
 use super::state::DashboardState;
 use super::util::{append_audit, format_rfc3339, new_audit_entry};
-use crate::storage::{AuditAction, AuditAuthMethod, AuditTargetType, Storage};
+use crate::http::extract::JsonBody;
+use crate::storage::{AuditAction, AuditAuthMethod, AuditTargetType, Role, Storage};
 
 pub struct AuthenticatedSession {
     pub token: String,
     pub auth_method: AuditAuthMethod,
+    pub user_id: Option<Uuid>,
+    pub role: Role,
+}
+
+impl AuthenticatedSession {
+    #[allow(clippy::result_large_err)]
+    pub fn require(&self, perm: Permission) -> Result<(), Response> {
+        if self.role.has(perm) {
+            Ok(())
+        } else {
+            Err((StatusCode::FORBIDDEN, Json(json!({"error":"forbidden"}))).into_response())
+        }
+    }
 }
 
 pub async fn extract_session<S: Storage + Clone + Send + Sync + 'static>(
@@ -45,9 +65,27 @@ pub async fn extract_session<S: Storage + Clone + Send + Sync + 'static>(
             .into_response()
     })?;
 
+    let user_id = state.auth.session_user_id(token).await.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error":"unauthorized"})),
+        )
+            .into_response()
+    })?;
+
+    let role = state.auth.session_role(token).await.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error":"unauthorized"})),
+        )
+            .into_response()
+    })?;
+
     Ok(AuthenticatedSession {
         token: token.to_owned(),
         auth_method,
+        user_id,
+        role,
     })
 }
 
@@ -81,7 +119,7 @@ pub struct TokenResponse {
 
 pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
-    Json(body): Json<VerifyBody>,
+    JsonBody(body): JsonBody<VerifyBody>,
 ) -> Response {
     if !state.auth.consume_challenge(&body.nonce).await {
         append_audit(
@@ -92,6 +130,7 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
                 AuditTargetType::Auth,
                 None,
                 Some("invalid or expired nonce".to_owned()),
+                None,
             ),
         )
         .await;
@@ -111,6 +150,7 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
                 AuditTargetType::Auth,
                 None,
                 Some("invalid signature encoding".to_owned()),
+                None,
             ),
         )
         .await;
@@ -143,6 +183,7 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
                 AuditTargetType::Auth,
                 None,
                 Some("signature verification failed".to_owned()),
+                None,
             ),
         )
         .await;
@@ -153,13 +194,17 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
             .into_response();
     }
 
-    let token = state.auth.new_session(AuditAuthMethod::KeyBased).await;
+    let token = state
+        .auth
+        .new_session(AuditAuthMethod::KeyBased, None, Role::Owner)
+        .await;
     append_audit(
         &*state.storage,
         new_audit_entry(
             AuditAuthMethod::KeyBased,
             AuditAction::LoginSuccess,
             AuditTargetType::Auth,
+            None,
             None,
             None,
         ),
@@ -174,25 +219,51 @@ pub async fn verify_handler<S: Storage + Clone + Send + Sync + 'static>(
 
 #[derive(Deserialize)]
 pub struct LoginBody {
+    pub email: String,
     pub password: String,
+}
+
+fn unauthorized_response(payment_sandbox: bool) -> Response {
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({"error":"unauthorized","payment_sandbox":payment_sandbox})),
+    )
+        .into_response()
 }
 
 pub async fn login_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
-    Json(body): Json<LoginBody>,
+    JsonBody(body): JsonBody<LoginBody>,
 ) -> Response {
-    let Some(ref hash) = state.dashboard_password_hash else {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(
-                json!({"error":"password_not_configured","payment_sandbox":state.payment_sandbox}),
-            ),
-        )
-            .into_response();
+    let user = match state.storage.get_staff_user_by_email(&body.email).await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            append_audit(
+                &*state.storage,
+                new_audit_entry(
+                    AuditAuthMethod::Password,
+                    AuditAction::LoginFailed,
+                    AuditTargetType::Auth,
+                    None,
+                    None,
+                    None,
+                ),
+            )
+            .await;
+            return unauthorized_response(state.payment_sandbox);
+        }
+        Err(_) => return unauthorized_response(state.payment_sandbox),
     };
 
-    let ok = bcrypt::verify(&body.password, hash).unwrap_or(false);
-    if !ok {
+    let Ok(parsed) = PasswordHash::new(&user.password_hash) else {
+        return unauthorized_response(state.payment_sandbox);
+    };
+
+    if Argon2::default()
+        .verify_password(body.password.as_bytes(), &parsed)
+        .is_err()
+        || !user.active
+    {
         append_audit(
             &*state.storage,
             new_audit_entry(
@@ -201,17 +272,22 @@ pub async fn login_handler<S: Storage + Clone + Send + Sync + 'static>(
                 AuditTargetType::Auth,
                 None,
                 None,
+                None,
             ),
         )
         .await;
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"unauthorized","payment_sandbox":state.payment_sandbox})),
-        )
-            .into_response();
+        return unauthorized_response(state.payment_sandbox);
     }
 
-    let token = state.auth.new_session(AuditAuthMethod::Password).await;
+    let _ = state
+        .storage
+        .update_staff_user_last_login(user.id, super::util::now_ns())
+        .await;
+
+    let token = state
+        .auth
+        .new_session(AuditAuthMethod::Password, Some(user.id), user.role)
+        .await;
     append_audit(
         &*state.storage,
         new_audit_entry(
@@ -220,6 +296,7 @@ pub async fn login_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Auth,
             None,
             None,
+            Some(user.id),
         ),
     )
     .await;
@@ -250,6 +327,7 @@ pub async fn logout_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Auth,
             None,
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -259,6 +337,8 @@ pub async fn logout_handler<S: Storage + Clone + Send + Sync + 'static>(
 #[derive(Serialize)]
 pub struct SessionInfoResponse {
     pub expires_at: String,
+    pub role: String,
+    pub user_id: Option<Uuid>,
     pub payment_sandbox: bool,
 }
 
@@ -281,7 +361,7 @@ pub async fn session_info_handler<S: Storage + Clone + Send + Sync + 'static>(
         }
     };
 
-    let expires_at = match state.auth.session_expires_at(&token).await {
+    let (expires_at, role, user_id) = match state.auth.session_expires_at(&token).await {
         Some(instant) => {
             let now_instant = std::time::Instant::now();
             let now_sys = std::time::SystemTime::now();
@@ -298,7 +378,14 @@ pub async fn session_info_handler<S: Storage + Clone + Send + Sync + 'static>(
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs();
-            format_rfc3339(epoch_secs)
+            let exp_str = format_rfc3339(epoch_secs);
+            let role = state
+                .auth
+                .session_role(&token)
+                .await
+                .unwrap_or(Role::Auditor);
+            let user_id = state.auth.session_user_id(&token).await.flatten();
+            (exp_str, role, user_id)
         }
         None => {
             return (
@@ -311,31 +398,11 @@ pub async fn session_info_handler<S: Storage + Clone + Send + Sync + 'static>(
 
     Json(SessionInfoResponse {
         expires_at,
+        role: role.to_string(),
+        user_id,
         payment_sandbox: state.payment_sandbox,
     })
     .into_response()
-}
-
-pub async fn password_stub_handler<S: Storage + Clone + Send + Sync + 'static>(
-    State(state): State<Arc<DashboardState<S>>>,
-    headers: HeaderMap,
-) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({"error":"unauthorized"})),
-        )
-            .into_response();
-    }
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(json!({
-            "error": "not_implemented",
-            "message": "POST /api/auth/password is not yet implemented",
-            "payment_sandbox": state.payment_sandbox
-        })),
-    )
-        .into_response()
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -11,8 +11,10 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::auth::extract_session;
+use super::rbac::Permission;
 use super::state::DashboardState;
 use super::util::{append_audit, new_audit_entry, now_ns};
+use crate::http::extract::{JsonBody, PathParam};
 use crate::storage::{
     AuditAction, AuditTargetType, ConnectivityMode, PaymentProvider, Product, Storage,
     TransferPolicy, TsaTier,
@@ -50,12 +52,15 @@ pub async fn list_products_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::ProductsRead) {
+        return r;
     }
     match state.storage.list_products().await {
         Ok(products) => {
@@ -92,7 +97,7 @@ pub struct CreateProductBody {
 pub async fn create_product_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Json(body): Json<CreateProductBody>,
+    JsonBody(body): JsonBody<CreateProductBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -101,6 +106,9 @@ pub async fn create_product_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::ProductsWrite) {
+        return r;
+    }
 
     let Ok(connectivity_mode) = body.connectivity_mode.parse::<ConnectivityMode>() else {
         return (
@@ -174,6 +182,7 @@ pub async fn create_product_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Product,
             Some(product_id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -188,14 +197,17 @@ pub async fn create_product_handler<S: Storage + Clone + Send + Sync + 'static>(
 pub async fn get_product_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::ProductsRead) {
+        return r;
     }
     match state.storage.get_product(id).await {
         Ok(Some(p)) => Json(product_to_json(&p, state.payment_sandbox)).into_response(),
@@ -233,8 +245,8 @@ pub struct UpdateProductBody {
 pub async fn update_product_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<UpdateProductBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<UpdateProductBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -243,6 +255,9 @@ pub async fn update_product_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::ProductsWrite) {
+        return r;
+    }
 
     let mut product = match state.storage.get_product(id).await {
         Ok(Some(p)) => p,
@@ -322,6 +337,7 @@ pub async fn update_product_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Product,
             Some(id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -332,7 +348,7 @@ pub async fn update_product_handler<S: Storage + Clone + Send + Sync + 'static>(
 pub async fn delete_product_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -341,6 +357,9 @@ pub async fn delete_product_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::ProductsWrite) {
+        return r;
+    }
 
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
@@ -384,6 +403,7 @@ pub async fn delete_product_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Product,
             Some(id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -394,7 +414,7 @@ pub async fn delete_product_handler<S: Storage + Clone + Send + Sync + 'static>(
 pub async fn activate_product_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -403,6 +423,9 @@ pub async fn activate_product_handler<S: Storage + Clone + Send + Sync + 'static
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::ProductsWrite) {
+        return r;
+    }
 
     let product = match state.storage.get_product(id).await {
         Ok(Some(p)) => p,
@@ -491,6 +514,7 @@ pub async fn activate_product_handler<S: Storage + Clone + Send + Sync + 'static
             AuditTargetType::Product,
             Some(id),
             None,
+            session.user_id,
         ),
     )
     .await;

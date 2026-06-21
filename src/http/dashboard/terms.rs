@@ -2,9 +2,10 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use crate::http::extract::{JsonBody, PathParam};
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -13,6 +14,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::auth::extract_session;
+use super::rbac::Permission;
 use super::state::DashboardState;
 use super::util::{append_audit, format_ns_as_rfc3339, new_audit_entry, now_ns};
 use crate::storage::{
@@ -78,14 +80,17 @@ fn policy_to_json(p: &UpgradePolicyRow, payment_sandbox: bool) -> Value {
 pub async fn get_declarations_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::TermsRead) {
+        return r;
     }
     match state.storage.get_term_declaration(id).await {
         Ok(Some(d)) => Json(declaration_to_json(&d, state.payment_sandbox)).into_response(),
@@ -119,8 +124,8 @@ pub struct PutDeclarationsBody {
 pub async fn put_declarations_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<PutDeclarationsBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<PutDeclarationsBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -129,6 +134,9 @@ pub async fn put_declarations_handler<S: Storage + Clone + Send + Sync + 'static
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::TermsWrite) {
+        return r;
+    }
 
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
@@ -168,6 +176,7 @@ pub async fn put_declarations_handler<S: Storage + Clone + Send + Sync + 'static
             AuditTargetType::Product,
             Some(id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -178,14 +187,17 @@ pub async fn put_declarations_handler<S: Storage + Clone + Send + Sync + 'static
 pub async fn get_terms_template_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::TermsRead) {
+        return r;
     }
 
     let product = match state.storage.get_product(id).await {
@@ -239,7 +251,7 @@ pub async fn get_terms_template_handler<S: Storage + Clone + Send + Sync + 'stat
 
 {updates}
 
-// --- Add your additional legal text below ---
+// -- Add your additional legal text below ---
 "#,
         name = product.name,
         warranty = warranty,
@@ -307,8 +319,8 @@ fn validate_terms(source: &str) -> (TermsValidationStatus, Vec<Value>) {
 pub async fn upload_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<UploadTermsBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<UploadTermsBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -317,6 +329,9 @@ pub async fn upload_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::TermsWrite) {
+        return r;
+    }
 
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
@@ -363,6 +378,7 @@ pub async fn upload_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::TermsDocument,
             Some(doc.id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -385,14 +401,17 @@ pub async fn upload_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
 pub async fn list_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::TermsRead) {
+        return r;
     }
     match state.storage.list_terms_documents(id).await {
         Ok(docs) => {
@@ -413,14 +432,17 @@ pub async fn list_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
 pub async fn get_terms_document_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path((_product_id, doc_id)): Path<(Uuid, Uuid)>,
+    PathParam((_product_id, doc_id)): PathParam<(Uuid, Uuid)>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::TermsRead) {
+        return r;
     }
     match state.storage.get_terms_document(doc_id).await {
         Ok(Some(d)) => Json(terms_doc_to_json(&d, state.payment_sandbox)).into_response(),
@@ -440,7 +462,7 @@ pub async fn get_terms_document_handler<S: Storage + Clone + Send + Sync + 'stat
 pub async fn acknowledge_terms_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path((_product_id, doc_id)): Path<(Uuid, Uuid)>,
+    PathParam((_product_id, doc_id)): PathParam<(Uuid, Uuid)>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -449,6 +471,9 @@ pub async fn acknowledge_terms_handler<S: Storage + Clone + Send + Sync + 'stati
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::TermsWrite) {
+        return r;
+    }
 
     let doc = match state.storage.get_terms_document(doc_id).await {
         Ok(Some(d)) => d,
@@ -521,6 +546,7 @@ pub async fn acknowledge_terms_handler<S: Storage + Clone + Send + Sync + 'stati
             AuditTargetType::TermsDocument,
             Some(doc_id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -531,14 +557,17 @@ pub async fn acknowledge_terms_handler<S: Storage + Clone + Send + Sync + 'stati
 pub async fn get_fields_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::TermsRead) {
+        return r;
     }
     match state.storage.get_customer_fields(id).await {
         Ok(fields) => {
@@ -572,8 +601,8 @@ pub struct PutFieldsBody {
 pub async fn put_fields_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<PutFieldsBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<PutFieldsBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -582,6 +611,9 @@ pub async fn put_fields_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::TermsWrite) {
+        return r;
+    }
 
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
@@ -626,6 +658,7 @@ pub async fn put_fields_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Product,
             Some(id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -640,14 +673,17 @@ pub async fn put_fields_handler<S: Storage + Clone + Send + Sync + 'static>(
 pub async fn get_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::TermsRead) {
+        return r;
     }
 
     let product = match state.storage.get_product(id).await {
@@ -704,8 +740,8 @@ pub struct PatchVersionsBody {
 pub async fn patch_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<PatchVersionsBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<PatchVersionsBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -714,6 +750,9 @@ pub async fn patch_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::TermsWrite) {
+        return r;
+    }
 
     let mut product = match state.storage.get_product(id).await {
         Ok(Some(p)) => p,
@@ -760,6 +799,7 @@ pub async fn patch_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Product,
             Some(id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -783,8 +823,8 @@ pub struct CreatePolicyBody {
 pub async fn create_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<CreatePolicyBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<CreatePolicyBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -793,6 +833,9 @@ pub async fn create_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::TermsWrite) {
+        return r;
+    }
 
     if state.storage.get_product(id).await.ok().flatten().is_none() {
         return (
@@ -831,6 +874,7 @@ pub async fn create_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Product,
             Some(id),
             None,
+            session.user_id,
         ),
     )
     .await;
@@ -845,7 +889,7 @@ pub async fn create_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
 pub async fn delete_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path((_product_id, policy_id)): Path<(Uuid, Uuid)>,
+    PathParam((_product_id, policy_id)): PathParam<(Uuid, Uuid)>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -854,6 +898,9 @@ pub async fn delete_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::TermsWrite) {
+        return r;
+    }
 
     if state
         .storage
@@ -886,6 +933,7 @@ pub async fn delete_policy_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::Product,
             Some(policy_id),
             None,
+            session.user_id,
         ),
     )
     .await;

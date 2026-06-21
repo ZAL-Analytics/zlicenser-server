@@ -2,19 +2,20 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
 use uuid::Uuid;
 
+use crate::http::extract::{JsonBody, PathParam};
 use crate::issuance::handlers::{ConsentInput, HandlerContext, LicenseReceipt, LicenseRequest};
 use crate::storage::Storage;
 
 pub async fn request_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(ctx): State<Arc<HandlerContext<S>>>,
-    Json(req): Json<LicenseRequest>,
+    JsonBody(req): JsonBody<LicenseRequest>,
 ) -> Response {
     match crate::issuance::handlers::handle_license_request(&ctx, req).await {
         Ok(offer) => (StatusCode::OK, Json(offer)).into_response(),
@@ -31,8 +32,8 @@ pub struct ReceiptBody {
 
 pub async fn receipt_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(ctx): State<Arc<HandlerContext<S>>>,
-    Path(session_id): Path<Uuid>,
-    Json(body): Json<ReceiptBody>,
+    PathParam(session_id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<ReceiptBody>,
 ) -> Response {
     let customer_signature: [u8; 64] = match body.customer_signature.try_into() {
         Ok(sig) => sig,

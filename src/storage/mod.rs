@@ -286,6 +286,21 @@ pub trait AuditStore: Send + Sync {
     ) -> crate::Result<Paginated<AuditEntry>>;
 }
 
+#[async_trait]
+pub trait StaffUserStore: Send + Sync {
+    async fn create_staff_user(&self, user: &NewStaffUser) -> crate::Result<StaffUser>;
+    async fn get_staff_user_by_id(&self, id: Uuid) -> crate::Result<Option<StaffUser>>;
+    async fn get_staff_user_by_email(&self, email: &str) -> crate::Result<Option<StaffUser>>;
+    async fn list_staff_users(&self) -> crate::Result<Vec<StaffUser>>;
+    async fn update_staff_user(
+        &self,
+        id: Uuid,
+        update: &StaffUserUpdate,
+    ) -> crate::Result<Option<StaffUser>>;
+    async fn update_staff_user_last_login(&self, id: Uuid, at_ns: i64) -> crate::Result<()>;
+    async fn count_active_owners(&self) -> crate::Result<u64>;
+}
+
 pub trait Storage:
     VendorStore
     + CustomerStore
@@ -295,6 +310,7 @@ pub trait Storage:
     + SecurityStore
     + EnrollmentStore
     + AuditStore
+    + StaffUserStore
 {
 }
 
@@ -307,5 +323,6 @@ impl<T> Storage for T where
         + SecurityStore
         + EnrollmentStore
         + AuditStore
+        + StaffUserStore
 {
 }

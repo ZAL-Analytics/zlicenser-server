@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use crate::http::extract::{JsonBody, PathParam};
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -11,6 +12,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::auth::extract_session;
+use super::rbac::Permission;
 use super::state::DashboardState;
 use super::util::{append_audit, format_ns_as_rfc3339, new_audit_entry, now_ns};
 use crate::storage::{AuditAction, AuditTargetType, Storage, TransferRequest, TransferStatus};
@@ -35,12 +37,15 @@ pub async fn list_transfers_handler<S: Storage + Clone + Send + Sync + 'static>(
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::TransfersDecide) {
+        return r;
     }
 
     let product_id = params.get("product_id").and_then(|s| s.parse().ok());
@@ -73,8 +78,8 @@ pub struct ResolveTransferBody {
 pub async fn approve_transfer_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<ResolveTransferBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<ResolveTransferBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -83,6 +88,9 @@ pub async fn approve_transfer_handler<S: Storage + Clone + Send + Sync + 'static
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::TransfersDecide) {
+        return r;
+    }
 
     let request = match state.storage.get_transfer_request(id).await {
         Ok(Some(r)) => r,
@@ -146,6 +154,7 @@ pub async fn approve_transfer_handler<S: Storage + Clone + Send + Sync + 'static
             AuditTargetType::Transfer,
             Some(id),
             body.vendor_note,
+            session.user_id,
         ),
     )
     .await;
@@ -156,8 +165,8 @@ pub async fn approve_transfer_handler<S: Storage + Clone + Send + Sync + 'static
 pub async fn reject_transfer_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<ResolveTransferBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<ResolveTransferBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -166,6 +175,9 @@ pub async fn reject_transfer_handler<S: Storage + Clone + Send + Sync + 'static>
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::TransfersDecide) {
+        return r;
+    }
 
     let request = match state.storage.get_transfer_request(id).await {
         Ok(Some(r)) => r,
@@ -229,6 +241,7 @@ pub async fn reject_transfer_handler<S: Storage + Clone + Send + Sync + 'static>
             AuditTargetType::Transfer,
             Some(id),
             body.vendor_note,
+            session.user_id,
         ),
     )
     .await;

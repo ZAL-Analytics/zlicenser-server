@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -824,6 +825,75 @@ pub mod abandon_reason {
     pub const CAPTURE_FAILED: &str = "CaptureFailed";
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Role {
+    Owner,
+    Admin,
+    Support,
+    ProductManager,
+    Auditor,
+}
+
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Owner => "Owner",
+            Self::Admin => "Admin",
+            Self::Support => "Support",
+            Self::ProductManager => "ProductManager",
+            Self::Auditor => "Auditor",
+        })
+    }
+}
+
+impl std::str::FromStr for Role {
+    type Err = crate::Error;
+    fn from_str(s: &str) -> crate::Result<Self> {
+        match s {
+            "Owner" => Ok(Self::Owner),
+            "Admin" => Ok(Self::Admin),
+            "Support" => Ok(Self::Support),
+            "ProductManager" => Ok(Self::ProductManager),
+            "Auditor" => Ok(Self::Auditor),
+            _ => Err(crate::Error::Corrupt(format!("unknown Role: {s}"))),
+        }
+    }
+}
+
+pub struct StaffUser {
+    pub id: Uuid,
+    pub email: String,
+    pub password_hash: String,
+    pub display_name: String,
+    pub role: Role,
+    pub active: bool,
+    pub created_by: Option<Uuid>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub last_login_at: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NewStaffUser {
+    pub id: Uuid,
+    pub email: String,
+    pub password_hash: String,
+    pub display_name: String,
+    pub role: Role,
+    pub created_by: Option<Uuid>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StaffUserUpdate {
+    pub display_name: Option<String>,
+    pub role: Option<Role>,
+    pub active: Option<bool>,
+    pub password_hash: Option<String>,
+    pub updated_at: i64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AuditAuthMethod {
     KeyBased,
@@ -880,6 +950,11 @@ pub enum AuditAction {
     BindingQuarantine,
     BindingTerminate,
     BindingResume,
+    UserCreate,
+    UserRoleChange,
+    UserDeactivate,
+    UserReactivate,
+    OwnPasswordChange,
 }
 
 impl std::fmt::Display for AuditAction {
@@ -908,6 +983,11 @@ impl std::fmt::Display for AuditAction {
             Self::BindingQuarantine => "BindingQuarantine",
             Self::BindingTerminate => "BindingTerminate",
             Self::BindingResume => "BindingResume",
+            Self::UserCreate => "UserCreate",
+            Self::UserRoleChange => "UserRoleChange",
+            Self::UserDeactivate => "UserDeactivate",
+            Self::UserReactivate => "UserReactivate",
+            Self::OwnPasswordChange => "OwnPasswordChange",
         })
     }
 }
@@ -939,6 +1019,11 @@ impl std::str::FromStr for AuditAction {
             "BindingQuarantine" => Ok(Self::BindingQuarantine),
             "BindingTerminate" => Ok(Self::BindingTerminate),
             "BindingResume" => Ok(Self::BindingResume),
+            "UserCreate" => Ok(Self::UserCreate),
+            "UserRoleChange" => Ok(Self::UserRoleChange),
+            "UserDeactivate" => Ok(Self::UserDeactivate),
+            "UserReactivate" => Ok(Self::UserReactivate),
+            "OwnPasswordChange" => Ok(Self::OwnPasswordChange),
             _ => Err(crate::Error::Corrupt(format!("unknown AuditAction: {s}"))),
         }
     }
@@ -955,6 +1040,7 @@ pub enum AuditTargetType {
     Binding,
     Vendor,
     Auth,
+    User,
 }
 
 impl std::fmt::Display for AuditTargetType {
@@ -969,6 +1055,7 @@ impl std::fmt::Display for AuditTargetType {
             Self::Binding => "binding",
             Self::Vendor => "vendor",
             Self::Auth => "auth",
+            Self::User => "user",
         })
     }
 }
@@ -986,6 +1073,7 @@ impl std::str::FromStr for AuditTargetType {
             "binding" => Ok(Self::Binding),
             "vendor" => Ok(Self::Vendor),
             "auth" => Ok(Self::Auth),
+            "user" => Ok(Self::User),
             _ => Err(crate::Error::Corrupt(format!(
                 "unknown AuditTargetType: {s}"
             ))),
@@ -1002,6 +1090,7 @@ pub struct AuditEntry {
     pub target_type: AuditTargetType,
     pub target_id: Option<Uuid>,
     pub detail: Option<String>,
+    pub actor_id: Option<Uuid>,
 }
 
 #[derive(Debug, Clone, Default)]

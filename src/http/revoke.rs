@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use axum::{
-    Json,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::http::extract::{JsonBody, PathParam};
 use crate::issuance::handlers::HandlerContext;
 use crate::storage::{Storage, types::RevocationSource};
 
@@ -20,8 +20,8 @@ pub struct RevokeBody {
 pub async fn revoke_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(ctx): State<Arc<HandlerContext<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<RevokeBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<RevokeBody>,
 ) -> Response {
     if let Some(expected_token) = ctx.config.api_bearer_token.as_deref() {
         let auth = headers

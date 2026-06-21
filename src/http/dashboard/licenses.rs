@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
@@ -11,8 +11,10 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::auth::extract_session;
+use super::rbac::Permission;
 use super::state::DashboardState;
 use super::util::{append_audit, format_ns_as_rfc3339, new_audit_entry, now_ns};
+use crate::http::extract::{JsonBody, PathParam};
 use crate::storage::{
     AuditAction, AuditTargetType, License, LicenseFilter, LicenseStatus, Page, RevocationRecord,
     RevocationSource, Storage,
@@ -43,12 +45,15 @@ pub async fn list_licenses_handler<S: Storage + Clone + Send + Sync + 'static>(
     headers: HeaderMap,
     axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::LicensesRead) {
+        return r;
     }
 
     let filter = LicenseFilter {
@@ -91,14 +96,17 @@ pub async fn list_licenses_handler<S: Storage + Clone + Send + Sync + 'static>(
 pub async fn get_license_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
+    PathParam(id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::LicensesRead) {
+        return r;
     }
     match state.storage.get_license(id).await {
         Ok(Some(l)) => Json(license_to_json(&l, state.payment_sandbox)).into_response(),
@@ -123,8 +131,8 @@ pub struct RevokeLicenseBody {
 pub async fn revoke_license_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(id): Path<Uuid>,
-    Json(body): Json<RevokeLicenseBody>,
+    PathParam(id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<RevokeLicenseBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -133,6 +141,9 @@ pub async fn revoke_license_handler<S: Storage + Clone + Send + Sync + 'static>(
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::LicensesRevoke) {
+        return r;
+    }
 
     let license = match state.storage.get_license(id).await {
         Ok(Some(l)) => l,
@@ -194,6 +205,7 @@ pub async fn revoke_license_handler<S: Storage + Clone + Send + Sync + 'static>(
             AuditTargetType::License,
             Some(id),
             body.reason,
+            session.user_id,
         ),
     )
     .await;
@@ -209,8 +221,8 @@ pub struct RevokeAllBody {
 pub async fn revoke_all_customer_licenses_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(customer_id): Path<Uuid>,
-    Json(body): Json<RevokeAllBody>,
+    PathParam(customer_id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<RevokeAllBody>,
 ) -> Response {
     let Ok(session) = extract_session(&headers, &state).await else {
         return (
@@ -219,6 +231,9 @@ pub async fn revoke_all_customer_licenses_handler<S: Storage + Clone + Send + Sy
         )
             .into_response();
     };
+    if let Err(r) = session.require(Permission::LicensesRevoke) {
+        return r;
+    }
 
     if state
         .storage
@@ -283,6 +298,7 @@ pub async fn revoke_all_customer_licenses_handler<S: Storage + Clone + Send + Sy
             AuditTargetType::Customer,
             Some(customer_id),
             Some(format!("revoked {revoked} licenses")),
+            session.user_id,
         ),
     )
     .await;
@@ -294,14 +310,17 @@ pub async fn revoke_all_customer_licenses_handler<S: Storage + Clone + Send + Sy
 pub async fn client_versions_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(product_id): Path<Uuid>,
+    PathParam(product_id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::ProductsRead) {
+        return r;
     }
 
     match state
@@ -328,14 +347,17 @@ pub async fn client_versions_handler<S: Storage + Clone + Send + Sync + 'static>
 pub async fn evidence_bundle_stub_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(state): State<Arc<DashboardState<S>>>,
     headers: HeaderMap,
-    Path(_id): Path<Uuid>,
+    PathParam(_id): PathParam<Uuid>,
 ) -> Response {
-    if extract_session(&headers, &state).await.is_err() {
+    let Ok(session) = extract_session(&headers, &state).await else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(json!({"error":"unauthorized"})),
         )
             .into_response();
+    };
+    if let Err(r) = session.require(Permission::LicensesRead) {
+        return r;
     }
     (
         StatusCode::NOT_IMPLEMENTED,

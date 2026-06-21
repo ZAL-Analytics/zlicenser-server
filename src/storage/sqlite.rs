@@ -8,7 +8,7 @@ use uuid::Uuid;
 use crate::storage::types::*;
 use crate::storage::{
     AuditStore, CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore,
-    SecurityStore, VendorStore,
+    SecurityStore, StaffUserStore, VendorStore,
 };
 
 #[derive(Clone)]
@@ -321,6 +321,21 @@ struct DbAuditEntry {
     target_type: String,
     target_id: Option<Vec<u8>>,
     detail: Option<String>,
+    actor_id: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct DbStaffUser {
+    id: String,
+    email: String,
+    password_hash: String,
+    display_name: String,
+    role: String,
+    active: i64,
+    created_by: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+    last_login_at: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -597,6 +612,14 @@ fn from_db_security_event_record(r: DbSecurityEventRecord) -> crate::Result<Secu
 }
 
 fn from_db_audit_entry(r: DbAuditEntry) -> crate::Result<AuditEntry> {
+    let actor_id = r
+        .actor_id
+        .as_deref()
+        .map(|s| {
+            s.parse::<Uuid>()
+                .map_err(|_| crate::Error::Corrupt(format!("invalid actor_id UUID: {s}")))
+        })
+        .transpose()?;
     Ok(AuditEntry {
         id: blob_to_uuid(&r.id)?,
         occurred_at: r.occurred_at,
@@ -605,6 +628,33 @@ fn from_db_audit_entry(r: DbAuditEntry) -> crate::Result<AuditEntry> {
         target_type: decode_enum(r.target_type)?,
         target_id: decode_opt_uuid(r.target_id)?,
         detail: r.detail,
+        actor_id,
+    })
+}
+
+fn from_db_staff_user(r: DbStaffUser) -> crate::Result<StaffUser> {
+    let created_by = r
+        .created_by
+        .as_deref()
+        .map(|s| {
+            s.parse::<Uuid>()
+                .map_err(|_| crate::Error::Corrupt(format!("invalid created_by UUID: {s}")))
+        })
+        .transpose()?;
+    Ok(StaffUser {
+        id: r
+            .id
+            .parse::<Uuid>()
+            .map_err(|_| crate::Error::Corrupt(format!("invalid staff_user id UUID: {}", r.id)))?,
+        email: r.email,
+        password_hash: r.password_hash,
+        display_name: r.display_name,
+        role: decode_enum(r.role)?,
+        active: int_to_bool(r.active),
+        created_by,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        last_login_at: r.last_login_at,
     })
 }
 
@@ -2298,10 +2348,11 @@ impl EnrollmentStore for SqliteStorage {
 impl AuditStore for SqliteStorage {
     async fn append_audit_entry(&self, entry: &AuditEntry) -> crate::Result<()> {
         let target_id_blob = entry.target_id.map(uuid_to_blob);
+        let actor_id_str = entry.actor_id.map(|id| id.to_string());
         sqlx::query(
             "INSERT INTO vendor_audit_log \
-             (id, occurred_at, auth_method, action, target_type, target_id, detail) \
-             VALUES (?,?,?,?,?,?,?)",
+             (id, occurred_at, auth_method, action, target_type, target_id, detail, actor_id) \
+             VALUES (?,?,?,?,?,?,?,?)",
         )
         .bind(uuid_to_blob(entry.id))
         .bind(entry.occurred_at)
@@ -2310,6 +2361,7 @@ impl AuditStore for SqliteStorage {
         .bind(encode_enum(&entry.target_type))
         .bind(target_id_blob)
         .bind(&entry.detail)
+        .bind(actor_id_str)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -2391,6 +2443,115 @@ impl AuditStore for SqliteStorage {
     }
 }
 
+#[async_trait]
+impl StaffUserStore for SqliteStorage {
+    async fn create_staff_user(&self, user: &NewStaffUser) -> crate::Result<StaffUser> {
+        let id_str = user.id.to_string();
+        let role_str = encode_enum(&user.role);
+        let created_by_str = user.created_by.map(|id| id.to_string());
+        sqlx::query(
+            "INSERT INTO staff_users \
+             (id, email, password_hash, display_name, role, active, created_by, created_at, updated_at) \
+             VALUES (?,?,?,?,?,1,?,?,?)",
+        )
+        .bind(&id_str)
+        .bind(&user.email)
+        .bind(&user.password_hash)
+        .bind(&user.display_name)
+        .bind(&role_str)
+        .bind(&created_by_str)
+        .bind(user.created_at)
+        .bind(user.updated_at)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users WHERE id = ?")
+            .bind(&id_str)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| crate::Error::Database(e.to_string()))
+            .and_then(from_db_staff_user)
+    }
+
+    async fn get_staff_user_by_id(&self, id: Uuid) -> crate::Result<Option<StaffUser>> {
+        let id_str = id.to_string();
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users WHERE id = ?")
+            .bind(&id_str)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(from_db_staff_user)
+            .transpose()
+    }
+
+    async fn get_staff_user_by_email(&self, email: &str) -> crate::Result<Option<StaffUser>> {
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users WHERE email = ?")
+            .bind(email)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(from_db_staff_user)
+            .transpose()
+    }
+
+    async fn list_staff_users(&self) -> crate::Result<Vec<StaffUser>> {
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users ORDER BY created_at ASC")
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(from_db_staff_user)
+            .collect()
+    }
+
+    async fn update_staff_user(
+        &self,
+        id: Uuid,
+        update: &StaffUserUpdate,
+    ) -> crate::Result<Option<StaffUser>> {
+        let id_str = id.to_string();
+        let role_str = update.role.as_ref().map(encode_enum);
+        sqlx::query(
+            "UPDATE staff_users SET \
+             display_name = COALESCE(?, display_name), \
+             role = COALESCE(?, role), \
+             active = COALESCE(?, active), \
+             password_hash = COALESCE(?, password_hash), \
+             updated_at = ? \
+             WHERE id = ?",
+        )
+        .bind(&update.display_name)
+        .bind(&role_str)
+        .bind(update.active.map(bool_to_int))
+        .bind(&update.password_hash)
+        .bind(update.updated_at)
+        .bind(&id_str)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users WHERE id = ?")
+            .bind(&id_str)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(from_db_staff_user)
+            .transpose()
+    }
+
+    async fn update_staff_user_last_login(&self, id: Uuid, at_ns: i64) -> crate::Result<()> {
+        let id_str = id.to_string();
+        sqlx::query("UPDATE staff_users SET last_login_at = ? WHERE id = ?")
+            .bind(at_ns)
+            .bind(&id_str)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn count_active_owners(&self) -> crate::Result<u64> {
+        let row: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM staff_users WHERE role = 'Owner' AND active = 1")
+                .fetch_one(&self.pool)
+                .await?;
+        u64::try_from(row.0)
+            .map_err(|_| crate::Error::Corrupt("owner count out of u64 range".into()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2402,6 +2563,7 @@ mod tests {
     #[tokio::test]
     async fn audit_append_and_list() {
         let store = in_memory().await;
+        let actor = uuid::Uuid::new_v4();
         let entry = AuditEntry {
             id: uuid::Uuid::new_v4(),
             occurred_at: 1_000_000,
@@ -2410,6 +2572,7 @@ mod tests {
             target_type: AuditTargetType::Product,
             target_id: None,
             detail: Some("test".into()),
+            actor_id: Some(actor),
         };
         store.append_audit_entry(&entry).await.unwrap();
         let page = Page::new(1, 50);
@@ -2420,6 +2583,122 @@ mod tests {
         assert_eq!(result.total, 1);
         assert_eq!(result.items[0].id, entry.id);
         assert_eq!(result.items[0].action, AuditAction::ProductCreate);
+        assert_eq!(result.items[0].actor_id, Some(actor));
+    }
+
+    #[tokio::test]
+    async fn staff_user_create_and_fetch() {
+        let store = in_memory().await;
+        let now = 1_000_000_i64;
+        let user_id = uuid::Uuid::new_v4();
+        let new_user = NewStaffUser {
+            id: user_id,
+            email: "owner@example.com".into(),
+            password_hash: "$argon2id$v=19$m=19456,t=2,p=1$fakesalt$fakehash".into(),
+            display_name: "Owner".into(),
+            role: Role::Owner,
+            created_by: None,
+            created_at: now,
+            updated_at: now,
+        };
+        let created = store.create_staff_user(&new_user).await.unwrap();
+        assert_eq!(created.id, user_id);
+        assert_eq!(created.email, "owner@example.com");
+        assert_eq!(created.role, Role::Owner);
+        assert!(created.active);
+
+        let fetched = store.get_staff_user_by_id(user_id).await.unwrap().unwrap();
+        assert_eq!(fetched.id, user_id);
+
+        let by_email = store
+            .get_staff_user_by_email("owner@example.com")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(by_email.id, user_id);
+    }
+
+    #[tokio::test]
+    async fn staff_user_count_active_owners() {
+        let store = in_memory().await;
+        assert_eq!(store.count_active_owners().await.unwrap(), 0);
+
+        let now = 2_000_000_i64;
+        store
+            .create_staff_user(&NewStaffUser {
+                id: uuid::Uuid::new_v4(),
+                email: "owner@example.com".into(),
+                password_hash: "hash".into(),
+                display_name: "Owner".into(),
+                role: Role::Owner,
+                created_by: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+        assert_eq!(store.count_active_owners().await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn staff_user_update_and_deactivate() {
+        let store = in_memory().await;
+        let now = 3_000_000_i64;
+        let user_id = uuid::Uuid::new_v4();
+        store
+            .create_staff_user(&NewStaffUser {
+                id: user_id,
+                email: "admin@example.com".into(),
+                password_hash: "hash".into(),
+                display_name: "Admin".into(),
+                role: Role::Admin,
+                created_by: None,
+                created_at: now,
+                updated_at: now,
+            })
+            .await
+            .unwrap();
+
+        let updated = store
+            .update_staff_user(
+                user_id,
+                &StaffUserUpdate {
+                    display_name: Some("Admin Updated".into()),
+                    role: None,
+                    active: Some(false),
+                    password_hash: None,
+                    updated_at: now + 1,
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(updated.display_name, "Admin Updated");
+        assert!(!updated.active);
+        assert_eq!(store.count_active_owners().await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn staff_user_list() {
+        let store = in_memory().await;
+        let now = 4_000_000_i64;
+        for (i, role) in [Role::Owner, Role::Admin, Role::Support].iter().enumerate() {
+            store
+                .create_staff_user(&NewStaffUser {
+                    id: uuid::Uuid::new_v4(),
+                    email: format!("user{i}@example.com"),
+                    password_hash: "hash".into(),
+                    display_name: format!("User {i}"),
+                    role: *role,
+                    created_by: None,
+                    created_at: now + i64::try_from(i).unwrap(),
+                    updated_at: now,
+                })
+                .await
+                .unwrap();
+        }
+        let users = store.list_staff_users().await.unwrap();
+        assert_eq!(users.len(), 3);
     }
 
     #[tokio::test]

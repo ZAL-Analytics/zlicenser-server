@@ -5420,10 +5420,10 @@ version = "0.1.2"
 dependencies = [
  "aes-gcm",
  "anyhow",
+ "argon2",
  "async-trait",
  "axum",
  "base64",
- "bcrypt",
  "blake3",
  "ed25519-dalek",
  "figment",
@@ -5459,6 +5459,7 @@ name = "zlicenser-server-bin"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "argon2",
  "async-trait",
  "axum",
  "axum-server",

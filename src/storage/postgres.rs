@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::storage::types::*;
 use crate::storage::{
     AuditStore, CustomerStore, EnrollmentStore, LicenseStore, PaymentStore, SeatStore,
-    SecurityStore, VendorStore,
+    SecurityStore, StaffUserStore, VendorStore,
 };
 
 #[derive(Clone)]
@@ -275,6 +275,21 @@ struct DbAuditEntry {
     target_type: String,
     target_id: Option<Uuid>,
     detail: Option<String>,
+    actor_id: Option<String>,
+}
+
+#[derive(sqlx::FromRow)]
+struct DbStaffUser {
+    id: String,
+    email: String,
+    password_hash: String,
+    display_name: String,
+    role: String,
+    active: bool,
+    created_by: Option<String>,
+    created_at: i64,
+    updated_at: i64,
+    last_login_at: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -554,6 +569,14 @@ fn from_db_security_event_record(r: DbSecurityEventRecord) -> crate::Result<Secu
 }
 
 fn from_db_audit_entry(r: DbAuditEntry) -> crate::Result<AuditEntry> {
+    let actor_id = r
+        .actor_id
+        .as_deref()
+        .map(|s| {
+            s.parse::<Uuid>()
+                .map_err(|_| crate::Error::Corrupt(format!("invalid actor_id UUID: {s}")))
+        })
+        .transpose()?;
     Ok(AuditEntry {
         id: r.id,
         occurred_at: r.occurred_at,
@@ -562,6 +585,33 @@ fn from_db_audit_entry(r: DbAuditEntry) -> crate::Result<AuditEntry> {
         target_type: decode_enum(r.target_type)?,
         target_id: r.target_id,
         detail: r.detail,
+        actor_id,
+    })
+}
+
+fn from_db_staff_user(r: DbStaffUser) -> crate::Result<StaffUser> {
+    let created_by = r
+        .created_by
+        .as_deref()
+        .map(|s| {
+            s.parse::<Uuid>()
+                .map_err(|_| crate::Error::Corrupt(format!("invalid created_by UUID: {s}")))
+        })
+        .transpose()?;
+    Ok(StaffUser {
+        id: r
+            .id
+            .parse::<Uuid>()
+            .map_err(|_| crate::Error::Corrupt(format!("invalid staff_user id UUID: {}", r.id)))?,
+        email: r.email,
+        password_hash: r.password_hash,
+        display_name: r.display_name,
+        role: decode_enum(r.role)?,
+        active: r.active,
+        created_by,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+        last_login_at: r.last_login_at,
     })
 }
 
@@ -2283,10 +2333,11 @@ impl EnrollmentStore for PostgresStorage {
 #[async_trait]
 impl AuditStore for PostgresStorage {
     async fn append_audit_entry(&self, entry: &AuditEntry) -> crate::Result<()> {
+        let actor_id_str = entry.actor_id.map(|id| id.to_string());
         sqlx::query(
             "INSERT INTO vendor_audit_log \
-             (id, occurred_at, auth_method, action, target_type, target_id, detail) \
-             VALUES ($1,$2,$3,$4,$5,$6,$7)",
+             (id, occurred_at, auth_method, action, target_type, target_id, detail, actor_id) \
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         )
         .bind(entry.id)
         .bind(entry.occurred_at)
@@ -2295,6 +2346,7 @@ impl AuditStore for PostgresStorage {
         .bind(encode_enum(&entry.target_type))
         .bind(entry.target_id)
         .bind(&entry.detail)
+        .bind(actor_id_str)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -2379,5 +2431,115 @@ impl AuditStore for PostgresStorage {
             page: page.page,
             page_size: page.page_size,
         })
+    }
+}
+
+#[async_trait]
+impl StaffUserStore for PostgresStorage {
+    async fn create_staff_user(&self, user: &NewStaffUser) -> crate::Result<StaffUser> {
+        let id_str = user.id.to_string();
+        let role_str = encode_enum(&user.role);
+        let created_by_str = user.created_by.map(|id| id.to_string());
+        sqlx::query(
+            "INSERT INTO staff_users \
+             (id, email, password_hash, display_name, role, active, created_by, created_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,TRUE,$6,$7,$8)",
+        )
+        .bind(&id_str)
+        .bind(&user.email)
+        .bind(&user.password_hash)
+        .bind(&user.display_name)
+        .bind(&role_str)
+        .bind(&created_by_str)
+        .bind(user.created_at)
+        .bind(user.updated_at)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users WHERE id = $1")
+            .bind(&id_str)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| crate::Error::Database(e.to_string()))
+            .and_then(from_db_staff_user)
+    }
+
+    async fn get_staff_user_by_id(&self, id: Uuid) -> crate::Result<Option<StaffUser>> {
+        let id_str = id.to_string();
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users WHERE id = $1")
+            .bind(&id_str)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(from_db_staff_user)
+            .transpose()
+    }
+
+    async fn get_staff_user_by_email(&self, email: &str) -> crate::Result<Option<StaffUser>> {
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users WHERE email = $1")
+            .bind(email)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(from_db_staff_user)
+            .transpose()
+    }
+
+    async fn list_staff_users(&self) -> crate::Result<Vec<StaffUser>> {
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users ORDER BY created_at ASC")
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(from_db_staff_user)
+            .collect()
+    }
+
+    async fn update_staff_user(
+        &self,
+        id: Uuid,
+        update: &StaffUserUpdate,
+    ) -> crate::Result<Option<StaffUser>> {
+        let id_str = id.to_string();
+        let role_str = update.role.as_ref().map(encode_enum);
+        sqlx::query(
+            "UPDATE staff_users SET \
+             display_name = COALESCE($1, display_name), \
+             role = COALESCE($2, role), \
+             active = COALESCE($3, active), \
+             password_hash = COALESCE($4, password_hash), \
+             updated_at = $5 \
+             WHERE id = $6",
+        )
+        .bind(&update.display_name)
+        .bind(&role_str)
+        .bind(update.active)
+        .bind(&update.password_hash)
+        .bind(update.updated_at)
+        .bind(&id_str)
+        .execute(&self.pool)
+        .await?;
+        sqlx::query_as::<_, DbStaffUser>("SELECT * FROM staff_users WHERE id = $1")
+            .bind(&id_str)
+            .fetch_optional(&self.pool)
+            .await?
+            .map(from_db_staff_user)
+            .transpose()
+    }
+
+    async fn update_staff_user_last_login(&self, id: Uuid, at_ns: i64) -> crate::Result<()> {
+        let id_str = id.to_string();
+        sqlx::query("UPDATE staff_users SET last_login_at = $1 WHERE id = $2")
+            .bind(at_ns)
+            .bind(&id_str)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn count_active_owners(&self) -> crate::Result<u64> {
+        let row: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM staff_users WHERE role = 'Owner' AND active = TRUE",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        u64::try_from(row.0)
+            .map_err(|_| crate::Error::Corrupt("owner count out of u64 range".into()))
     }
 }

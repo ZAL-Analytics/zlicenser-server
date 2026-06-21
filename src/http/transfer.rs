@@ -2,13 +2,14 @@ use std::sync::Arc;
 
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::http::extract::{JsonBody, PathParam};
 use crate::issuance::handlers::HandlerContext;
 use crate::storage::Storage;
 
@@ -20,8 +21,8 @@ pub struct TransferRequestBody {
 
 pub async fn request_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(ctx): State<Arc<HandlerContext<S>>>,
-    Path(license_id): Path<Uuid>,
-    Json(body): Json<TransferRequestBody>,
+    PathParam(license_id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<TransferRequestBody>,
 ) -> Response {
     match crate::issuance::transfer::request_transfer(
         &ctx.storage,
@@ -43,8 +44,8 @@ pub struct ResolveBody {
 
 pub async fn approve_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(ctx): State<Arc<HandlerContext<S>>>,
-    Path(transfer_id): Path<Uuid>,
-    Json(body): Json<ResolveBody>,
+    PathParam(transfer_id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<ResolveBody>,
 ) -> Response {
     match crate::issuance::transfer::approve_transfer(&ctx.storage, transfer_id, body.vendor_note)
         .await
@@ -56,8 +57,8 @@ pub async fn approve_handler<S: Storage + Clone + Send + Sync + 'static>(
 
 pub async fn reject_handler<S: Storage + Clone + Send + Sync + 'static>(
     State(ctx): State<Arc<HandlerContext<S>>>,
-    Path(transfer_id): Path<Uuid>,
-    Json(body): Json<ResolveBody>,
+    PathParam(transfer_id): PathParam<Uuid>,
+    JsonBody(body): JsonBody<ResolveBody>,
 ) -> Response {
     match crate::issuance::transfer::reject_transfer(&ctx.storage, transfer_id, body.vendor_note)
         .await

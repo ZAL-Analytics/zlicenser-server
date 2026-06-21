@@ -112,6 +112,7 @@ pub fn new_audit_entry(
     target_type: AuditTargetType,
     target_id: Option<Uuid>,
     detail: Option<String>,
+    actor_id: Option<Uuid>,
 ) -> AuditEntry {
     AuditEntry {
         id: Uuid::new_v4(),
@@ -121,6 +122,7 @@ pub fn new_audit_entry(
         target_type,
         target_id,
         detail,
+        actor_id,
     }
 }
 

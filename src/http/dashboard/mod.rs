@@ -3,10 +3,12 @@ pub mod auth;
 pub mod customers;
 pub mod licenses;
 pub mod products;
+pub mod rbac;
 pub mod security;
 pub mod state;
 pub mod terms;
 pub mod transfers;
+pub mod users;
 pub mod util;
 pub mod vendor;
 
@@ -17,6 +19,7 @@ use axum::{
     routing::{delete, get, post},
 };
 
+use crate::http::extract;
 use crate::storage::Storage;
 use state::DashboardState;
 
@@ -42,10 +45,30 @@ pub fn build_dashboard_router<S: Storage + Clone + Send + Sync + 'static>(
     state: Arc<DashboardState<S>>,
 ) -> Router {
     Router::new()
-        // auth (no rate limit)
+        // auth
         .route("/api/auth/logout", post(auth::logout_handler::<S>))
         .route("/api/auth/session", get(auth::session_info_handler::<S>))
-        .route("/api/auth/password", post(auth::password_stub_handler::<S>))
+        // user management
+        .route(
+            "/api/users",
+            get(users::list_users_handler::<S>).post(users::create_user_handler::<S>),
+        )
+        .route(
+            "/api/users/{id}",
+            get(users::get_user_handler::<S>).patch(users::update_user_handler::<S>),
+        )
+        .route(
+            "/api/users/{id}/deactivate",
+            post(users::deactivate_user_handler::<S>),
+        )
+        .route(
+            "/api/users/{id}/reactivate",
+            post(users::reactivate_user_handler::<S>),
+        )
+        .route(
+            "/api/users/me/password",
+            post(users::change_own_password_handler::<S>),
+        )
         // products
         .route(
             "/api/products",
@@ -174,5 +197,6 @@ pub fn build_dashboard_router<S: Storage + Clone + Send + Sync + 'static>(
         .route("/api/vendor", get(vendor::get_vendor_handler::<S>))
         // audit log
         .route("/api/audit-log", get(audit::list_audit_log_handler::<S>))
+        .fallback(extract::not_found_handler)
         .with_state(state)
 }
