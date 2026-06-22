@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use crate::storage::{AuditAuthMethod, Role, Storage};
 
-const SESSION_TTL: Duration = Duration::from_hours(8);
-const CHALLENGE_TTL: Duration = Duration::from_mins(1);
+const SESSION_TTL: Duration = Duration::from_secs(8 * 60 * 60);
+const CHALLENGE_TTL: Duration = Duration::from_secs(60);
 
 struct SessionRecord {
     auth_method: AuditAuthMethod,

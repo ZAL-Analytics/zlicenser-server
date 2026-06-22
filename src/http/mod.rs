@@ -118,7 +118,17 @@ impl IntoResponse for crate::Error {
             _ => (StatusCode::INTERNAL_SERVER_ERROR, "internal_error"),
         };
 
-        let body = Json(json!({ "error": code, "message": self.to_string() }));
+        // Internal variants carry server-side detail that must not leak to callers.
+        let message = match &self {
+            crate::Error::Database(_)
+            | crate::Error::Migration(_)
+            | crate::Error::Corrupt(_)
+            | crate::Error::SecretWrappingFailed(_) => {
+                "an internal server error occurred".to_owned()
+            }
+            _ => self.to_string(),
+        };
+        let body = Json(json!({ "error": code, "message": message }));
         (status, body).into_response()
     }
 }

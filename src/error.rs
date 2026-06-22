@@ -115,42 +115,37 @@ pub enum Error {
     LicenseHasBeenIssued,
 }
 
+#[cfg(any(feature = "storage-sqlite", feature = "storage-postgres"))]
+fn sqlx_error_to_server_error(e: &sqlx::Error) -> Error {
+    match e {
+        sqlx::Error::RowNotFound => Error::NotFound,
+        sqlx::Error::Database(db) => {
+            let msg = db.message().to_string();
+            if db.is_unique_violation() {
+                Error::Conflict(msg)
+            } else if db.is_foreign_key_violation()
+                // SQLite does not set is_foreign_key_violation(); detect by message.
+                || msg.contains("FOREIGN KEY")
+            {
+                Error::ForeignKeyViolation(msg)
+            } else {
+                Error::Database(msg)
+            }
+        }
+        _ => Error::Database(e.to_string()),
+    }
+}
+
 #[cfg(feature = "storage-sqlite")]
 impl From<sqlx::Error> for Error {
     fn from(e: sqlx::Error) -> Self {
-        match &e {
-            sqlx::Error::RowNotFound => Error::NotFound,
-            sqlx::Error::Database(db) => {
-                let msg = db.message().to_string();
-                if db.is_unique_violation() {
-                    Error::Conflict(msg)
-                } else if db.is_foreign_key_violation() || msg.contains("FOREIGN KEY") {
-                    Error::ForeignKeyViolation(msg)
-                } else {
-                    Error::Database(msg)
-                }
-            }
-            _ => Error::Database(e.to_string()),
-        }
+        sqlx_error_to_server_error(&e)
     }
 }
 
 #[cfg(all(feature = "storage-postgres", not(feature = "storage-sqlite")))]
 impl From<sqlx::Error> for Error {
     fn from(e: sqlx::Error) -> Self {
-        match &e {
-            sqlx::Error::RowNotFound => Error::NotFound,
-            sqlx::Error::Database(db) => {
-                let msg = db.message().to_string();
-                if db.is_unique_violation() {
-                    Error::Conflict(msg)
-                } else if db.is_foreign_key_violation() {
-                    Error::ForeignKeyViolation(msg)
-                } else {
-                    Error::Database(msg)
-                }
-            }
-            _ => Error::Database(e.to_string()),
-        }
+        sqlx_error_to_server_error(&e)
     }
 }

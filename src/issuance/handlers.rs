@@ -22,10 +22,17 @@ use crate::storage::{
     },
 };
 
+/// Sentinel value for `expected_updated_at` that disables the optimistic-locking
+/// check. Used only for terminal state transitions (Issued, Abandoned) where a
+/// concurrent writer racing us to the same terminal state is harmless.
+pub(crate) const SKIP_OPTIMISTIC_LOCK: i64 = 0;
+
 pub struct ServerConfig {
     pub offer_ttl_ns: Option<i64>,
     pub stripe_webhook_secret: Option<String>,
-    pub api_bearer_token: Option<String>,
+    /// Bearer token for the vendor API. Wrapped in `Secret` so it is never
+    /// accidentally logged or exposed via `Debug`.
+    pub api_bearer_token: Option<secrecy::Secret<String>>,
 }
 
 pub struct HandlerContext<S: Storage> {
@@ -89,8 +96,8 @@ pub struct IssuedGrant {
 
 #[derive(Serialize, Deserialize)]
 struct GrantRecord {
-    license_id: String,
-    product_id: String,
+    license_id: Uuid,
+    product_id: Uuid,
     fingerprint_commitment: Vec<u8>,
     customer_pubkey: Vec<u8>,
     seat_index: u32,
@@ -442,20 +449,20 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
     issue_all_records(
         &ctx.storage,
         &ctx.at_rest_key,
-        &session,
-        &product,
-        &customer,
-        &receipt,
-        &binding_cert,
-        &tsa_token,
-        &confirmation,
-        license_id,
-        seat_index,
-        expiry_at_ns,
-        session_id,
-        payment_sandbox,
-        payment_tier,
-        s_issue,
+        IssueParams {
+            session: &session,
+            product: &product,
+            customer: &customer,
+            receipt: Some(&receipt),
+            confirmation: &confirmation,
+            license_id,
+            seat_index,
+            expiry_at_ns,
+            session_id,
+            payment_sandbox,
+            payment_tier,
+            s_issue,
+        },
     )
     .await?;
 
@@ -471,25 +478,41 @@ pub async fn handle_license_receipt<S: Storage + 'static>(
     deserialize_grant(&grant_bytes)
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub(crate) struct IssueParams<'a> {
+    pub session: &'a EnrollmentSession,
+    pub product: &'a Product,
+    pub customer: &'a Customer,
+    pub receipt: Option<&'a LicenseReceipt>,
+    pub confirmation: &'a CaptureConfirmation,
+    pub license_id: Uuid,
+    pub seat_index: i64,
+    pub expiry_at_ns: Option<i64>,
+    pub session_id: Uuid,
+    pub payment_sandbox: bool,
+    pub payment_tier: ProviderTier,
+    pub s_issue: SIssue,
+}
+
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn issue_all_records<S: Storage>(
     storage: &Arc<S>,
     at_rest_key: &[u8; 32],
-    session: &EnrollmentSession,
-    product: &Product,
-    customer: &Customer,
-    receipt: &LicenseReceipt,
-    _cert: &BindingCert,
-    _tsa_token: &[u8],
-    confirmation: &CaptureConfirmation,
-    license_id: Uuid,
-    seat_index: i64,
-    expiry_at_ns: Option<i64>,
-    session_id: Uuid,
-    payment_sandbox: bool,
-    payment_tier: ProviderTier,
-    s_issue: SIssue,
+    p: IssueParams<'_>,
 ) -> crate::Result<()> {
+    let IssueParams {
+        session,
+        product,
+        customer,
+        receipt,
+        confirmation,
+        license_id,
+        seat_index,
+        expiry_at_ns,
+        session_id,
+        payment_sandbox,
+        payment_tier,
+        s_issue,
+    } = p;
     let now = now_ns();
 
     storage
@@ -575,9 +598,13 @@ pub(crate) async fn issue_all_records<S: Storage>(
             license_id,
             terms_document_id,
             terms_rendered_hash,
-            checkboxes_ticked: receipt.consent.checkboxes_ticked.join(","),
-            accepted_at_ns: receipt.consent.accepted_at_ns,
-            ip_address: receipt.consent.ip_address.clone(),
+            checkboxes_ticked: receipt.map_or_else(
+                || "recovered".to_owned(),
+                |r| r.consent.checkboxes_ticked.join(","),
+            ),
+            accepted_at_ns: receipt.map_or(1, |r| r.consent.accepted_at_ns),
+            ip_address: receipt
+                .map_or_else(|| "0.0.0.0".to_owned(), |r| r.consent.ip_address.clone()),
             client_version: session.client_version.clone(),
             protocol_version: session.protocol_version,
             terms_findings_shown,
@@ -589,7 +616,7 @@ pub(crate) async fn issue_all_records<S: Storage>(
     storage
         .update_enrollment_session(
             session_id,
-            0,
+            SKIP_OPTIMISTIC_LOCK,
             EnrollmentSessionUpdate {
                 state: Some(EnrollmentState::Issued),
                 payment_captured: Some(true),
@@ -608,7 +635,7 @@ pub(crate) async fn abandon<S: Storage>(storage: &Arc<S>, session_id: Uuid, reas
     if let Err(e) = storage
         .update_enrollment_session(
             session_id,
-            0,
+            SKIP_OPTIMISTIC_LOCK,
             EnrollmentSessionUpdate {
                 state: Some(EnrollmentState::Abandoned),
                 abandon_reason: Some(reason.to_owned()),
@@ -690,13 +717,12 @@ pub(crate) fn compute_expiry(product: &Product, issued_at_ns: i64) -> Option<i64
 }
 
 pub(crate) fn now_ns() -> i64 {
-    // Nanoseconds since epoch wraps in year 2262; safe for all practical purposes.
-    #[allow(clippy::cast_possible_truncation)]
-    let ns = std::time::SystemTime::now()
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_nanos() as i64;
-    ns
+        .as_nanos()
+        .try_into()
+        .unwrap_or(i64::MAX)
 }
 
 fn serialize_request(req: &LicenseRequest) -> crate::Result<Vec<u8>> {
@@ -724,8 +750,8 @@ fn serialize_receipt(receipt: &LicenseReceipt) -> crate::Result<Vec<u8>> {
 
 pub(crate) fn serialize_grant(grant: &IssuedGrant) -> crate::Result<Vec<u8>> {
     let rec = GrantRecord {
-        license_id: grant.license_id.to_string(),
-        product_id: grant.binding_cert.product_id.to_string(),
+        license_id: grant.license_id,
+        product_id: grant.binding_cert.product_id,
         fingerprint_commitment: grant.binding_cert.fingerprint_commitment.to_vec(),
         customer_pubkey: grant.binding_cert.customer_pubkey.to_vec(),
         seat_index: grant.binding_cert.seat_index,
@@ -747,14 +773,8 @@ pub(crate) fn deserialize_grant(bytes: &[u8]) -> crate::Result<IssuedGrant> {
     let rec: GrantRecord = serde_json::from_slice(bytes)
         .map_err(|e| crate::Error::Corrupt(format!("deserialize_grant: {e}")))?;
 
-    let license_id: Uuid = rec
-        .license_id
-        .parse()
-        .map_err(|e| crate::Error::Corrupt(format!("bad grant license_id: {e}")))?;
-    let product_id: Uuid = rec
-        .product_id
-        .parse()
-        .map_err(|e| crate::Error::Corrupt(format!("bad grant product_id: {e}")))?;
+    let license_id = rec.license_id;
+    let product_id = rec.product_id;
     let fingerprint_commitment: [u8; 32] = rec
         .fingerprint_commitment
         .try_into()
@@ -820,16 +840,4 @@ pub(crate) fn deserialize_receipt(bytes: &[u8]) -> crate::Result<LicenseReceipt>
         customer_signature,
         consent: rec.consent,
     })
-}
-
-pub(crate) fn empty_receipt() -> LicenseReceipt {
-    LicenseReceipt {
-        offer_nonce: Vec::new(),
-        customer_signature: [0u8; 64],
-        consent: ConsentInput {
-            checkboxes_ticked: vec!["recovered".to_owned()],
-            accepted_at_ns: 1,
-            ip_address: "0.0.0.0".to_owned(),
-        },
-    }
 }

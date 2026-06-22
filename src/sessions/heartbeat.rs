@@ -51,7 +51,7 @@ pub(crate) async fn handle_heartbeat<S: Storage>(
                 },
             )
             .await?;
-        let (case_id, vendor_sig) = sign_quarantine(ctx, case.as_ref(), &session);
+        let (case_id, vendor_sig) = sign_quarantine(ctx, case.as_ref(), &session)?;
         return Ok(HeartbeatAck {
             seq_no: session.seq_no,
             new_session_token: new_token,
@@ -167,7 +167,7 @@ pub(crate) async fn handle_heartbeat<S: Storage>(
                     .storage
                     .get_active_quarantine_case_for_session(session.id)
                     .await?;
-                let (case_id, vendor_sig) = sign_terminate(ctx, case.as_ref(), &session);
+                let (case_id, vendor_sig) = sign_terminate(ctx, case.as_ref(), &session)?;
                 ctx.storage
                     .update_active_session(
                         session.id,
@@ -308,51 +308,58 @@ async fn quarantine_session<S: Storage>(
     })
 }
 
-/// Signs a quarantine delivery using the active case, or a zero signature for edge cases.
+/// Signs a quarantine delivery using the active case.
+///
+/// Returns `Err(Corrupt)` if the session is quarantined but no case record exists,
+/// which indicates a storage inconsistency.
 fn sign_quarantine<S: Storage>(
     ctx: &Arc<HandlerContext<S>>,
     case: Option<&QuarantineCase>,
     session: &ActiveSession,
-) -> (Uuid, [u8; 64]) {
-    match case {
-        Some(c) => {
-            let canonical = crypto::canonical_command_bytes(
-                c.case_id,
-                crypto::CMD_QUARANTINE,
-                session.seq_no,
-                &c.reason,
-            );
-            (
-                c.case_id,
-                crypto::sign_command(&ctx.signing_key, &canonical),
-            )
-        }
-        // Session is quarantined but no open case exists, should not occur in normal operation.
-        None => (Uuid::new_v4(), [0u8; 64]),
-    }
+) -> crate::Result<(Uuid, [u8; 64])> {
+    let c = case.ok_or_else(|| {
+        crate::Error::Corrupt(format!(
+            "session {} is Quarantined but has no open quarantine case",
+            session.id
+        ))
+    })?;
+    let canonical = crypto::canonical_command_bytes(
+        c.case_id,
+        crypto::CMD_QUARANTINE,
+        session.seq_no,
+        &c.reason,
+    );
+    Ok((
+        c.case_id,
+        crypto::sign_command(&ctx.signing_key, &canonical),
+    ))
 }
 
-/// Signs a terminate delivery using the active case, or a zero signature for edge cases.
+/// Signs a terminate delivery using the active case.
+///
+/// Returns `Err(Corrupt)` if the Terminate command is pending but no case record exists,
+/// which indicates a storage inconsistency.
 fn sign_terminate<S: Storage>(
     ctx: &Arc<HandlerContext<S>>,
     case: Option<&QuarantineCase>,
     session: &ActiveSession,
-) -> (Uuid, [u8; 64]) {
-    match case {
-        Some(c) => {
-            let canonical = crypto::canonical_command_bytes(
-                c.case_id,
-                crypto::CMD_TERMINATE,
-                session.seq_no,
-                &c.reason,
-            );
-            (
-                c.case_id,
-                crypto::sign_command(&ctx.signing_key, &canonical),
-            )
-        }
-        None => (Uuid::nil(), [0u8; 64]),
-    }
+) -> crate::Result<(Uuid, [u8; 64])> {
+    let c = case.ok_or_else(|| {
+        crate::Error::Corrupt(format!(
+            "session {} has a Terminate command but no open quarantine case",
+            session.id
+        ))
+    })?;
+    let canonical = crypto::canonical_command_bytes(
+        c.case_id,
+        crypto::CMD_TERMINATE,
+        session.seq_no,
+        &c.reason,
+    );
+    Ok((
+        c.case_id,
+        crypto::sign_command(&ctx.signing_key, &canonical),
+    ))
 }
 
 /// Persists a `HeartbeatSequenceGap` security event record.
@@ -366,6 +373,9 @@ async fn emit_seq_gap_event<S: Storage>(
 ) -> crate::Result<()> {
     use zlicenser_protocol::sessions::SecurityEventType;
     let event_type = SecurityEventType::HeartbeatSequenceGap { expected, received };
+    let payload = serde_json::to_string(&event_type).map_err(|e| {
+        crate::Error::Corrupt(format!("failed to serialize HeartbeatSequenceGap: {e}"))
+    })?;
     ctx.storage
         .create_security_event(&SecurityEventRecord {
             id: 0,
@@ -376,7 +386,7 @@ async fn emit_seq_gap_event<S: Storage>(
             occurred_at_ns: now_ns,
             received_at_ns: now_ns,
             event_type: "HeartbeatSequenceGap".into(),
-            payload: serde_json::to_string(&event_type).unwrap_or_default(),
+            payload,
             severity: "Warning".into(),
             response_type: "Log".into(),
             case_id: None,

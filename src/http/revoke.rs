@@ -23,16 +23,20 @@ pub async fn revoke_handler<S: Storage + Clone + Send + Sync + 'static>(
     PathParam(id): PathParam<Uuid>,
     JsonBody(body): JsonBody<RevokeBody>,
 ) -> Response {
-    if let Some(expected_token) = ctx.config.api_bearer_token.as_deref() {
-        let auth = headers
+    if let Some(expected) = &ctx.config.api_bearer_token {
+        use secrecy::ExposeSecret as _;
+        use subtle::ConstantTimeEq as _;
+        let provided = headers
             .get("authorization")
             .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "));
-        match auth {
-            Some(token) if token == expected_token => {}
-            _ => {
-                return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
-            }
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .unwrap_or("");
+        if !bool::from(
+            provided
+                .as_bytes()
+                .ct_eq(expected.expose_secret().as_bytes()),
+        ) {
+            return (StatusCode::UNAUTHORIZED, "invalid bearer token").into_response();
         }
     }
 

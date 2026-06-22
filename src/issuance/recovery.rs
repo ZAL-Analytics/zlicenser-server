@@ -1,6 +1,6 @@
 use super::handlers::{
-    HandlerContext, deserialize_grant, deserialize_receipt, empty_receipt, issue_all_records,
-    now_ns, upsert_customer,
+    HandlerContext, IssueParams, SKIP_OPTIMISTIC_LOCK, deserialize_grant, deserialize_receipt,
+    issue_all_records, now_ns, upsert_customer,
 };
 use super::secrets::SIssue;
 use crate::storage::{
@@ -39,7 +39,7 @@ async fn recover_issue<S: Storage>(
             .storage
             .update_enrollment_session(
                 session.id,
-                0,
+                SKIP_OPTIMISTIC_LOCK,
                 EnrollmentSessionUpdate {
                     state: Some(EnrollmentState::Issued),
                     payment_captured: Some(true),
@@ -67,8 +67,6 @@ async fn recover_issue<S: Storage>(
         .receipt_bytes
         .as_deref()
         .and_then(|b| deserialize_receipt(b).ok());
-    let fallback = empty_receipt();
-    let receipt_ref = receipt.as_ref().unwrap_or(&fallback);
 
     let payment_sandbox = ctx.payment.is_payment_sandbox();
     let payment_tier = match ctx.payment.tier() {
@@ -90,20 +88,20 @@ async fn recover_issue<S: Storage>(
     issue_all_records(
         &ctx.storage,
         &ctx.at_rest_key,
-        session,
-        &product,
-        &customer,
-        receipt_ref,
-        &grant.binding_cert,
-        &grant.tsa_token,
-        &confirmation,
-        license_id,
-        i64::from(grant.binding_cert.seat_index),
-        grant.binding_cert.expiry_at_ns,
-        session.id,
-        payment_sandbox,
-        payment_tier,
-        SIssue::generate(),
+        IssueParams {
+            session,
+            product: &product,
+            customer: &customer,
+            receipt: receipt.as_ref(),
+            confirmation: &confirmation,
+            license_id,
+            seat_index: i64::from(grant.binding_cert.seat_index),
+            expiry_at_ns: grant.binding_cert.expiry_at_ns,
+            session_id: session.id,
+            payment_sandbox,
+            payment_tier,
+            s_issue: SIssue::generate(),
+        },
     )
     .await?;
 
